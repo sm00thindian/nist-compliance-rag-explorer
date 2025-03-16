@@ -3,6 +3,7 @@ debug.log
 U_CCI_List.xml
 knowledge/
 venv/
+stigs/
 assessment_checklists/
 config/config.ini
 *.pyc
