@@ -192,8 +192,21 @@ def _format_stig_table(recs: list, term_width: int) -> str:
 def generate_response(query, retrieved_docs, control_details, high_baseline_controls,
                       all_stig_recommendations, available_stigs, assessment_procedures,
                       cci_to_nist, generate_checklist=False):
-    query_lower = query.lower()
+    query_lower = query.lower().strip()
     response = []
+
+    # === SPECIAL COMMAND: LIST STIGS ===
+    if query_lower == "list stigs":
+        if not available_stigs:
+            return f"{Fore.YELLOW}No STIGs loaded.{Style.RESET_ALL}"
+        response.append(f"{Fore.CYAN}Available STIGs ({len(available_stigs)} total):{Style.RESET_ALL}")
+        for i, stig in enumerate(available_stigs[:20], 1):  # Show first 20
+            tech = stig.get('technology', 'Unknown')
+            title = stig.get('title', 'Unknown STIG')
+            response.append(f"  {i:2d}. {tech} - {title}")
+        if len(available_stigs) > 20:
+            response.append(f"  ... and {len(available_stigs) - 20} more.")
+        return "\n".join(response)
 
     # === ORIGINAL QUERY ===
     original_query = re.sub(r" with technology index \d+$", "", query).strip()
@@ -368,7 +381,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             else:
                 response.append(f"     1. Follow the control description to enforce this requirement.")
 
-        # === STIG TABLE (USE ctrl_key) ===
+        # === STIG TABLE ===
         if selected_techs:
             for tech in selected_techs:
                 recs = all_stig_recommendations.get(tech, {}).get(ctrl_key, [])
