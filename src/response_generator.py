@@ -98,16 +98,15 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     query_lower = query.lower()
     response = []
 
-    # === EXTRACT ORIGINAL QUERY (BEFORE CLARIFICATION) ===
+    # === EXTRACT ORIGINAL QUERY ===
     original_query = re.sub(r" with technology index \d+$", "", query).strip()
     original_lower = original_query.lower()
 
-    # === ALWAYS DEFINE THESE (FIX UNBOUND ERROR) ===
+    # === DEFINE QUERY TYPE & CONTROLS EARLY ===
     is_assessment_query = any(word in original_lower for word in ['assess', 'audit', 'verify', 'check'])
     is_implement_query = any(word in original_lower for word in ['implement', 'configure', 'harden', 'setup'])
     action = "Assessing" if is_assessment_query else "Implementing"
 
-    # === EXTRACT CONTROL IDS FROM ORIGINAL QUERY ===
     control_matches = re.findall(r"(\w{2}-\d+(?:\([a-z0-9]+\))?)", original_lower, re.IGNORECASE)
     control_ids = [normalize_control_id(m.upper()) for m in control_matches] if control_matches else []
     if not control_ids:
@@ -117,7 +116,36 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     tech_index_match = re.search(r"with technology index (\d+)", query_lower)
     if tech_index_match:
         selected_idx = int(tech_index_match.group(1))
-        tech_to_stig = {i+1: stig for i, stig in enumerate(available_stigs)}
+        # === REBUILD FILTERED LIST FROM ORIGINAL QUERY ===
+        doc = nlp(original_lower)
+        tech_keywords = []
+        tech_patterns = {
+            'windows': ['windows', 'microsoft', 'win', 'ms', 'windows 10', 'windows server'],
+            'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux', 'redhat'],
+            'ios': ['ios', 'ipad', 'apple', 'macos'],
+            'android': ['android', 'google', 'samsung', 'pixel'],
+            'vmware': ['vmware', 'esxi', 'vsphere'],
+            'solaris': ['solaris', 'sun'],
+            'splunk': ['splunk'],
+            'tippingpoint': ['tippingpoint', 'trend micro'],
+        }
+        for token in doc:
+            token_lower = token.text.lower()
+            for tech, patterns in tech_patterns.items():
+                if any(p in token_lower for p in patterns):
+                    tech_keywords.append(tech)
+                    break
+        tech_keywords = list(set(tech_keywords))
+
+        filtered_stigs = []
+        if tech_keywords:
+            for stig in available_stigs:
+                if any(kw in stig['title'].lower() for kw in tech_keywords):
+                    filtered_stigs.append(stig)
+        else:
+            filtered_stigs = available_stigs
+
+        tech_to_stig = {i+1: stig for i, stig in enumerate(filtered_stigs)}
         if selected_idx == 0:
             selected_techs = [stig['technology'] for stig in tech_to_stig.values()]
         elif 1 <= selected_idx <= len(tech_to_stig):
@@ -125,7 +153,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         else:
             response.append(f"{Fore.RED}Invalid technology index: {selected_idx}{Style.RESET_ALL}")
             return "\n".join(response)
-        logging.debug(f"Clarification: using tech index {selected_idx} → {selected_techs}")
+        logging.debug(f"Clarification: using index {selected_idx} → {selected_techs}")
     else:
         # === NORMAL QUERY PROCESSING ===
         cci_match = re.search(r"(cci-\d+)", original_lower)
@@ -152,7 +180,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append("- No CCI mappings found.")
             return "\n".join(response)
 
-        # === EXTRACT TECH KEYWORDS FROM ORIGINAL QUERY ===
+        # === EXTRACT TECH KEYWORDS ===
         doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
@@ -174,21 +202,18 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         tech_keywords = list(set(tech_keywords))
         logging.debug(f"Detected tech keywords: {tech_keywords}")
 
-        # === BUILD TECH INDEX ===
-        tech_to_stig = {i+1: stig for i, stig in enumerate(available_stigs)}
-        unique_techs = list(tech_to_stig.keys())
-
-        # === FILTER BY TECH KEYWORDS ===
-        filtered_techs = []
+        # === FILTER STIGS BY KEYWORDS ===
+        filtered_stigs = []
         if tech_keywords:
-            for idx in unique_techs:
-                stig = tech_to_stig[idx]
-                title_lower = stig['title'].lower()
-                if any(keyword in title_lower for keyword in tech_keywords):
-                    filtered_techs.append(idx)
-            if filtered_techs:
-                unique_techs = filtered_techs
-                logging.debug(f"Filtered to {len(unique_techs)} techs")
+            for stig in available_stigs:
+                if any(kw in stig['title'].lower() for kw in tech_keywords):
+                    filtered_stigs.append(stig)
+        else:
+            filtered_stigs = available_stigs
+
+        # === BUILD INDEX FROM FILTERED LIST ===
+        tech_to_stig = {i+1: stig for i, stig in enumerate(filtered_stigs)}
+        unique_techs = list(tech_to_stig.keys())
 
         # === AUTO-SELECT OR PROMPT ===
         if len(unique_techs) == 0:
@@ -211,7 +236,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top_techs)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === GENERATE FINAL RESPONSE (NOW SAFE) ===
+    # === GENERATE FINAL RESPONSE ===
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
 
@@ -237,7 +262,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 if ctrl.get('parameters'):
                     response.append(f"     {len(steps)+1}. Confirm parameters: {', '.join(ctrl['parameters'])}")
 
-            if selected-recognition_techs:
+            if selected_techs:
                 for tech in selected_techs:
                     recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
                     if recs:
