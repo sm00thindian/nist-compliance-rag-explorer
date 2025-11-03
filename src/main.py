@@ -1,145 +1,110 @@
-import argparse
-import configparser
-import logging
 import os
-import pickle
+import sys
 import re
-from colorama import init, Fore, Style
-from .data_fetchers import fetch_json_data, fetch_excel_data
+import logging
+from colorama import Fore, Style, init
+from sentence_transformers import SentenceTransformer
+import spacy
+from tqdm import tqdm
+
+# Local imports
+from .retriever import build_vector_store, retrieve_relevant_docs
 from .parsers import (
-    extract_controls_from_json, extract_controls_from_excel,
-    extract_high_baseline_controls, extract_assessment_procedures,
-    load_cci_mapping, load_stig_data, normalize_control_id
+    extract_controls_from_json,
+    extract_high_baseline_controls,
+    extract_assessment_procedures,
+    load_cci_mapping,
+    load_stig_data
 )
-from .vector_store import build_vector_store, retrieve_documents
 from .response_generator import generate_response
+from .text_processing import nlp  # spaCy model
 
-init()
+init(autoreset=True)
 
-# === CONFIGURATION ===
-config = configparser.ConfigParser()
-config.read('config/config.ini')
-SPACY_MODEL = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_sm')
+# === CONFIG ===
+KNOWLEDGE_DIR = "knowledge"
+NIST_CATALOG = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_catalog_json.json")
+HIGH_BASELINE = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_high-baseline_json.json")
+ASSESSMENT_PROC = os.path.join(KNOWLEDGE_DIR, "nist_800_53A-rev5_assessment-procedures_json.json")
+CCI_XML = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
+STIG_FOLDER = os.path.join(KNOWLEDGE_DIR, "stigs")
 
-# === PATHS ===
-KNOWLEDGE_DIR = 'knowledge'
-os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
-logging.basicConfig(
-    filename=os.path.join(KNOWLEDGE_DIR, 'debug.log'),
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filemode='w'
-)
-
-UNKNOWN_QUERIES_FILE = os.path.join(KNOWLEDGE_DIR, 'unknown_queries.pkl')
-
-
-def save_unknown_query(query):
-    unknown_queries = load_unknown_queries()
-    if query not in unknown_queries:
-        unknown_queries.append(query)
-        with open(UNKNOWN_QUERIES_FILE, 'wb') as f:
-            pickle.dump(unknown_queries, f)
-        logging.info(f"Saved unknown query: {query}")
-
-
-def load_unknown_queries():
-    if os.path.exists(UNKNOWN_QUERIES_FILE):
-        with open(UNKNOWN_QUERIES_FILE, 'rb') as f:
-            return pickle.load(f)
-    return []
-
-
+# === MAIN ===
 def main():
-    parser = argparse.ArgumentParser(description="NIST Compliance RAG Demo")
-    parser.add_argument('--model', type=str, default='all-mpnet-base-v2', help='SentenceTransformer model name')
-    args = parser.parse_args()
+    print(f"{Fore.CYAN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
+    print("Enter your compliance question (e.g., 'How do I assess AU-3?', 'exit'):")
 
-    stig_folder = config.get('DEFAULT', 'stig_folder', fallback='./stigs')
-    logging.debug(f"Resolved stig_folder: {os.path.abspath(stig_folder)}")
-    nist_800_53_xls_url = config.get('DEFAULT', 'nist_800_53_xls_url')
-    catalog_url = config.get('DEFAULT', 'catalog_url')
-    high_baseline_url = config.get('DEFAULT', 'high_baseline_url')
-    nist_800_53a_json_url = config.get('DEFAULT', 'nist_800_53a_json_url')
-    excel_local_path = os.path.join(KNOWLEDGE_DIR, 'sp800-53r5-control-catalog.xlsx')
+    # Load embedding model
+    print("Loading embedding model...")
+    embedder = SentenceTransformer("all-MiniLM-L12-v2")
+    print(f"Model loaded: {embedder}")
 
-    print(f"{Fore.CYAN}Fetching NIST SP 800-53 Rev 5 catalog data...{Style.RESET_ALL}")
-    catalog_json = fetch_json_data(catalog_url)
-    catalog_data = extract_controls_from_json(catalog_json) if catalog_json else extract_controls_from_excel(fetch_excel_data(nist_800_53_xls_url, excel_local_path))
+    # Load spaCy (already done in text_processing.py)
+    print(f"Loaded spaCy model: {nlp.meta['name']}")
 
-    print(f"{Fore.CYAN}Fetching NIST SP 800-53 Rev 5 High baseline JSON data...{Style.RESET_ALL}")
-    high_baseline_json = fetch_json_data(high_baseline_url)
-    high_baseline_data = extract_high_baseline_controls(high_baseline_json) if high_baseline_json else []
+    # Load NIST data
+    print("Fetching NIST SP 800-53 Rev 5 catalog data...")
+    with open(NIST_CATALOG, 'r', encoding='utf-8') as f:
+        catalog_json = json.load(f)
+    control_details = {c['control_id']: c for c in extract_controls_from_json(catalog_json)}
 
-    print(f"{Fore.CYAN}Fetching NIST SP 800-53A assessment procedures JSON data...{Style.RESET_ALL}")
-    assessment_json = fetch_json_data(nist_800_53a_json_url)
-    assessment_procedures = extract_assessment_procedures(assessment_json) if assessment_json else {}
+    print("Fetching NIST SP 800-53 Rev 5 High baseline JSON data...")
+    with open(HIGH_BASELINE, 'r', encoding='utf-8') as f:
+        high_baseline_json = json.load(f)
+    high_baseline_controls = extract_high_baseline_controls(high_baseline_json)
 
-    all_documents = [
-        f"NIST 800-53 Rev 5 Catalog, {ctrl['control_id']}: {ctrl['title']} {ctrl['description']}"
-        for ctrl in catalog_data
-    ] + [
-        f"NIST 800-53 Rev 5 Assessment, {ctrl['control_id']}: To assess this control, verify {ctrl['description'].lower()} Check parameters: {', '.join(ctrl['parameters']) if ctrl['parameters'] else 'none specified'}."
-        for ctrl in catalog_data
-    ] + high_baseline_data
+    print("Fetching NIST SP 800-53A assessment procedures JSON data...")
+    with open(ASSESSMENT_PROC, 'r', encoding='utf-8') as f:
+        assessment_json = json.load(f)
+    assessment_procedures = extract_assessment_procedures(assessment_json)
 
-    print(f"{Fore.CYAN}Building vector store...{Style.RESET_ALL}")
-    model, index, doc_list = build_vector_store(all_documents, args.model, KNOWLEDGE_DIR)
+    # Build vector store
+    print("Building vector store...")
+    all_docs = []
+    for ctrl in control_details.values():
+        all_docs.append(f"Catalog, {ctrl['control_id']}: {ctrl['title']}")
+        all_docs.append(f"Description, {ctrl['control_id']}: {ctrl['description'][:500]}")
+    index = build_vector_store(all_docs, embedder)
 
-    print(f"{Fore.CYAN}Loading CCI-to-NIST mapping...{Style.RESET_ALL}")
-    cci_to_nist = load_cci_mapping(os.path.join(KNOWLEDGE_DIR, 'U_CCI_List.xml'))
+    # Load CCI mapping
+    print("Loading CCI-to-NIST mapping...")
+    cci_to_nist = load_cci_mapping(CCI_XML)
 
-    print(f"{Fore.CYAN}Loading STIG data from folder: {stig_folder}{Style.RESET_ALL}")
-    all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
-    logging.debug(f"Loaded {len(available_stigs)} STIGs: {[stig['file'] for stig in available_stigs]}")
+    # Load STIG data
+    print("Loading STIG data...")
+    all_stig_recommendations, available_stigs = load_stig_data(STIG_FOLDER, cci_to_nist)
 
-    control_details = {ctrl['control_id']: ctrl for ctrl in catalog_data}
-    high_baseline_controls = {normalize_control_id(entry.split(', ')[1].split(': ')[0]) for entry in high_baseline_data}
+    # Unknown query log
+    unknown_queries = []
 
-    print(f"{Fore.GREEN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
-    print(f"Using spaCy model: {Fore.MAGENTA}{SPACY_MODEL}{Style.RESET_ALL}")
-    print("Type 'help' for examples, 'list stigs' to see available STIGs, 'show unknown' to see unhandled queries, 'exit' to quit.\n")
-
+    # === MAIN LOOP ===
     while True:
-        print(f"{Fore.YELLOW}Enter your compliance question (e.g., 'How do I assess AU-3?', 'exit'):{Style.RESET_ALL}")
-        query = input().strip()
-        if query.lower() == 'exit':
+        query = input(f"\n{Fore.GREEN}Enter your compliance question (e.g., 'How do I assess AU-3?', 'exit'): {Style.RESET_ALL}").strip()
+        if query.lower() in ['exit', 'quit', 'q']:
+            print("Goodbye!")
             break
-        if query.lower() == 'help':
-            print("Examples:")
-            print("- How should IA-5 be implemented for Windows?")
-            print("- How do I assess AU-3?")
-            print("- What is CCI-000130?")
-            print("- List CCI mappings for AU-3")
-            print("- Show CCI mappings")
-            print("- List STIGs")
-            print("- Show unknown")
-            continue
-        if query.lower() == 'show unknown':
-            unknown_queries = load_unknown_queries()
-            if unknown_queries:
-                print(f"{Fore.CYAN}Previously unhandled queries:{Style.RESET_ALL}")
-                for i, q in enumerate(unknown_queries, 1):
-                    print(f"{i}. {q}")
-            else:
-                print("No unknown queries recorded yet.")
-            continue
         if not query:
-            print("Please enter a query or type 'help' for examples.")
+            continue
+
+        # Special command
+        if query.lower() == "show unknown":
+            if unknown_queries:
+                print(f"{Fore.YELLOW}Unknown queries recorded:{Style.RESET_ALL}")
+                for q in unknown_queries:
+                    print(f"  • {q}")
+            else:
+                print(f"{Fore.CYAN}No unknown queries recorded.{Style.RESET_ALL}")
             continue
 
         generate_checklist = False
-        if "assess" in query.lower() or "audit" in query.lower():
-            while True:
-                response = input(f"{Fore.YELLOW}Generate an assessment checklist? (y/n): {Style.RESET_ALL}").strip().lower()
-                if response in ('y', 'n'):
-                    generate_checklist = response == 'y'
-                    break
-                print("Please enter 'y' or 'n'.")
+        if query.lower().endswith("?"):
+            checklist_input = input(f"{Fore.YELLOW}Generate an assessment checklist? (y/n): {Style.RESET_ALL}").strip().lower()
+            generate_checklist = checklist_input == 'y'
 
         print(f"\n{Fore.CYAN}Processing...{Style.RESET_ALL}")
-        retrieved_docs = retrieve_documents(query, model, index, doc_list)
-        
+        retrieved_docs = retrieve_relevant_docs(query, index, embedder)
+
+        # === INITIAL RESPONSE ===
         response = generate_response(
             query, retrieved_docs, control_details, high_baseline_controls,
             all_stig_recommendations, available_stigs, assessment_procedures,
@@ -157,20 +122,29 @@ def main():
                 if tech_choice.isdigit() and 0 <= int(tech_choice) <= num_options:
                     break
                 print(f"Please enter a number between 0 and {num_options}.")
-            # Strip previous index, append new one
             original_query = re.sub(r" with technology index \d+$", "", query).strip()
             query = f"{original_query} with technology index {tech_choice}"
+            # Reset retrieved_docs for new query
+            retrieved_docs = retrieve_relevant_docs(query, index, embedder)
             response = generate_response(
                 query, retrieved_docs, control_details, high_baseline_controls,
                 all_stig_recommendations, available_stigs, assessment_procedures,
                 cci_to_nist, generate_checklist=generate_checklist
             )
-        
-        if "not found" in response.lower() or "no specific" in response.lower() or len(retrieved_docs) == 0:
-            save_unknown_query(query)
-            response += f"\n{Fore.YELLOW}Note: This query has been recorded for future improvement. Type 'show unknown' to see all recorded queries.{Style.RESET_ALL}"
-        
-        print(f"\n{Fore.CYAN}### Response to '{query}'{Style.RESET_ALL}\n{response}\n")
+
+        # === FINAL OUTPUT ===
+        print(response)
+
+        # Record unknown controls
+        if "Not found in NIST 800-53 Rev 5 catalog" in response:
+            unknown_queries.append(query)
+
+    # Save unknown queries
+    if unknown_queries:
+        with open("unknown_queries.txt", "w") as f:
+            for q in unknown_queries:
+                f.write(q + "\n")
+        print(f"{Fore.YELLOW}Saved {len(unknown_queries)} unknown queries to unknown_queries.txt{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":
