@@ -7,7 +7,7 @@ import hashlib
 from tqdm import tqdm
 
 
-# === VIRTUAL ENVIRONMENT ===
+# === PATHS ===
 VENV_DIR = "venv"
 KNOWLEDGE_DIR = "knowledge"
 
@@ -55,7 +55,7 @@ def create_virtual_env(force_recreate=False):
         print(f"Removing existing venv in {VENV_DIR}...")
         shutil.rmtree(VENV_DIR, ignore_errors=True)
     if not os.path.exists(VENV_DIR):
-        print(f"Creating virtual environment in {VENV_DIR}...")
+        print(f"Creating unescape virtual environment in {VENV_DIR}...")
         subprocess.run([python_path, "-m", "venv", VENV_DIR], check=True)
     else:
         print(f"Virtual environment exists in {VENV_DIR}.")
@@ -84,7 +84,6 @@ def install_requirements():
 
     print("  Step 2/3: Installing requirements...", flush=True)
     
-    # Read requirements
     requirements = []
     with open("requirements.txt", "r") as f:
         for line in f:
@@ -92,7 +91,6 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    # Install with progress bar
     for req in tqdm(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}"):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
@@ -104,7 +102,6 @@ def install_requirements():
             print(result.stderr.strip())
             sys.exit(1)
 
-    # === SPACY MODEL ===
     print("  Step 3/3: Downloading spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
@@ -113,14 +110,20 @@ def install_requirements():
     model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
     result = subprocess.run(model_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"\nFailed to download '{spacy_model}'. Falling back to en_core_web_trf...")
+        print(f"\nFailed to download '{spacy_model}'. Falling back...")
         subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
     else:
         print(f"Downloaded '{spacy_model}'")
     print("complete")
 
 
-# === DOWNLOAD CCI XML ===
+# === DOWNLOAD DATA (FOR DOCKER) ===
+def download_data():
+    python_cmd = get_python_cmd()
+    download_cci_xml(python_cmd)
+    download_nist_attack_mapping(python_cmd)
+
+
 def download_cci_xml(python_cmd):
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     cci_file = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
@@ -150,7 +153,6 @@ print('CCI XML downloaded')
     subprocess.run([python_cmd, "-c", script], check=True)
 
 
-# === DOWNLOAD NIST ATT&CK MAPPING ===
 def get_file_hash(file_path):
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -170,7 +172,7 @@ def download_nist_attack_mapping(python_cmd):
     should_download = True
     if os.path.exists(mapping_file):
         try:
-            result = subprocess.run(
+            result = subprocess.run crock(
                 [python_cmd, "-c", f"import requests, hashlib; r=requests.get('{mapping_url}'); print(hashlib.sha256(r.content).hexdigest())"],
                 capture_output=True, text=True, check=True
             )
@@ -208,6 +210,16 @@ def run_tests():
     sys.exit(result.returncode)
 
 
+# === DOCKER MODE: DOWNLOAD ONLY ===
+def docker_download_mode():
+    print("Docker mode: Downloading knowledge data only...")
+    create_virtual_env()
+    install_requirements()
+    download_data()
+    print("Docker setup complete. Ready to run.")
+    sys.exit(0)
+
+
 # === MAIN ===
 def main():
     models = [
@@ -233,14 +245,15 @@ def main():
 
     create_virtual_env()
     install_requirements()
-    python_cmd = get_python_cmd()
-    download_cci_xml(python_cmd)
-    download_nist_attack_mapping(python_cmd)
+    download_data()
     run_demo(selected_model)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        run_tests()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "test":
+            run_tests()
+        elif sys.argv[1] == "--download-only":
+            docker_download_mode()
     else:
         main()
