@@ -4,12 +4,15 @@ import sys
 import shutil
 import configparser
 import hashlib
+from tqdm import tqdm
 
 
+# === VIRTUAL ENVIRONMENT ===
 VENV_DIR = "venv"
 KNOWLEDGE_DIR = "knowledge"
 
 
+# === PYTHON DISCOVERY ===
 def find_supported_python():
     candidates = []
     if sys.platform == "win32":
@@ -67,6 +70,7 @@ def get_python_cmd():
     return os.path.join(VENV_DIR, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin", "python3")
 
 
+# === INSTALL REQUIREMENTS WITH PROGRESS BAR ===
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -80,7 +84,7 @@ def install_requirements():
 
     print("  Step 2/3: Installing requirements...", flush=True)
     
-    # === CUSTOM PIP INSTALL WITH PROGRESS ===
+    # Read requirements
     requirements = []
     with open("requirements.txt", "r") as f:
         for line in f:
@@ -88,7 +92,8 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    for req in tqdm(requirements, desc="Packages", unit="pkg"):
+    # Install with progress bar
+    for req in tqdm(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}"):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
             capture_output=True,
@@ -96,7 +101,7 @@ def install_requirements():
         )
         if result.returncode != 0:
             print(f"\nFailed to install {req}")
-            print(result.stderr)
+            print(result.stderr.strip())
             sys.exit(1)
 
     # === SPACY MODEL ===
@@ -105,15 +110,17 @@ def install_requirements():
     config.read('config/config.ini')
     spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--force"]
+    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
     result = subprocess.run(model_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"\nFailed to download '{spacy_model}'. Falling back...")
+        print(f"\nFailed to download '{spacy_model}'. Falling back to en_core_web_trf...")
         subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
     else:
         print(f"Downloaded '{spacy_model}'")
     print("complete")
 
+
+# === DOWNLOAD CCI XML ===
 def download_cci_xml(python_cmd):
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     cci_file = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
@@ -143,6 +150,7 @@ print('CCI XML downloaded')
     subprocess.run([python_cmd, "-c", script], check=True)
 
 
+# === DOWNLOAD NIST ATT&CK MAPPING ===
 def get_file_hash(file_path):
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -185,12 +193,22 @@ print('Downloaded')
 """], check=True)
 
 
+# === RUN DEMO ===
 def run_demo(selected_model):
     python_cmd = get_python_cmd()
     print(f"\nLaunching demo with model: {selected_model}")
     subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], check=True)
 
 
+# === RUN TESTS ===
+def run_tests():
+    print("Running tests...")
+    python_cmd = get_python_cmd()
+    result = subprocess.run([python_cmd, "-m", "unittest", "discover", "-s", "test", "-p", "test_*.py", "-v"])
+    sys.exit(result.returncode)
+
+
+# === MAIN ===
 def main():
     models = [
         ("all-MiniLM-L12-v2", "Fast"),
@@ -201,7 +219,7 @@ def main():
         ("all-roberta-large-v1", "High accuracy"),
     ]
 
-    print("Select model:")
+    print("Select embedding model:")
     for i, (name, desc) in enumerate(models, 1):
         print(f"  {i}: {name} - {desc}")
     while True:
@@ -222,4 +240,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        run_tests()
+    else:
+        main()
