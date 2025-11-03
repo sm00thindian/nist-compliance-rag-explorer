@@ -4,6 +4,7 @@ import sys
 import shutil
 import configparser
 import hashlib
+from tqdm import tqdm
 
 
 # === PATHS ===
@@ -69,7 +70,7 @@ def get_python_cmd():
     return os.path.join(VENV_DIR, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin", "python3")
 
 
-# === INSTALL REQUIREMENTS WITH PROGRESS BAR (tqdm imported here) ===
+# === INSTALL REQUIREMENTS WITH PROGRESS BAR ===
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -81,14 +82,14 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    # === Import tqdm ONLY after venv is ready ===
+    # === Import tqdm AFTER venv ===
     try:
         from tqdm import tqdm as tqdm_lib
         TQDM_AVAILABLE = True
     except ImportError:
         TQDM_AVAILABLE = False
         def tqdm_lib(iterable, **kwargs):
-            return iterable  # Fallback
+            return iterable
 
     print("  Step 2/3: Installing requirements...", flush=True)
     
@@ -99,7 +100,7 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") if TQDM_AVAILABLE else requirements):
+    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg") if TQDM_AVAILABLE else requirements):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
             capture_output=True,
@@ -110,21 +111,30 @@ def install_requirements():
             print(result.stderr.strip())
             sys.exit(1)
 
+    # === STEP 3: SPAcY MODEL (OPTIMIZED) ===
     print("  Step 3/3: Installing spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--quiet"]
-    result = subprocess.run(model_cmd, capture_output=True, text=True)
-
-    if result.returncode == 0 and "already installed" in result.stdout.lower():
+    # Check if already installed
+    check_cmd = [python_cmd, "-m", "spacy", "validate"]
+    check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+    if spacy_model in check_result.stdout:
         print(f"Model '{spacy_model}' already installed")
-    elif result.returncode == 0:
-        print(f"Downloaded '{spacy_model}'")
     else:
-        print(f"Failed. Falling back to en_core_web_trf...")
-        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
+        # Download with progress (simulate via tqdm on subprocess)
+        download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
+        print("\n   Downloading...")
+        with tqdm(total=100, desc="Model", unit="%") as pbar:
+            result = subprocess.run(download_cmd, capture_output=True, text=True)
+            pbar.n = 100  # Simulate completion
+            pbar.refresh()
+        if result.returncode != 0:
+            print(f"Failed. Falling back to en_core_web_trf...")
+            subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
+        else:
+            print(f"Downloaded '{spacy_model}'")
     print("complete")
 
 
@@ -137,7 +147,7 @@ def download_data():
 
 def download_cci_xml(python_cmd):
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
-    cci_file = os.path.join(KNOWLEDGE_DIR, "U_C_CCI_List.xml")
+    cci_file = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     cci_url = config.get('DEFAULT', 'cci_url',
