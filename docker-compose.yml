@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  nist-rag:
+    build: .
+    volumes:
+      - ./knowledge:/app/knowledge
+      - ./stigs:/app/stigs
+    stdin_open: true
+    tty: true
