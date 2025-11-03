@@ -4,3 +4,4 @@ catalog_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/hea
 high_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_profile.json
 nist_800_53_xls_url = https://csrc.nist.gov/files/pubs/sp/800/53/r5/upd1/final/docs/sp800-53r5-control-catalog.xlsx
 stig_folder = ./stigs  # Default relative path
+spacy_model = en_core_web_trf
