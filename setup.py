@@ -11,12 +11,7 @@ KNOWLEDGE_DIR = "knowledge"
 
 
 def find_supported_python():
-    """
-    Find Python 3.10, 3.11, or 3.12 in PATH.
-    Returns (path, version_string) if compatible, else (None, None).
-    """
     candidates = []
-
     if sys.platform == "win32":
         python_exe = shutil.which("python")
         if python_exe:
@@ -38,48 +33,29 @@ def find_supported_python():
                 return candidate, version_output
         except Exception:
             continue
-
     return None, None
 
 
 def check_python_binary():
-    """
-    Ensure Python 3.10–3.12 is available.
-    """
     python_path, version = find_supported_python()
     if not python_path:
         print("Error: Python 3.10, 3.11, or 3.12 required.")
-        print("")
-        print("This project uses spaCy >= 3.8.0 (supports 3.10–3.12)")
-        print("  - Download: https://www.python.org/downloads/")
-        print("")
-        if sys.platform == "darwin":
-            print("  macOS: Use .pkg installer or `brew install python@3.11`")
-        elif sys.platform.startswith("linux"):
-            print("  Linux: `sudo apt install python3.11` or newer")
-        elif sys.platform == "win32":
-            print("  Windows: Install with 'Add to PATH'")
-        print("")
-        print("Verify: python3.11 --version  (or python --version)")
+        print("Download: https://www.python.org/downloads/")
         sys.exit(1)
-
     print(f"Using {version} at {python_path}")
     return python_path
 
 
 def create_virtual_env(force_recreate=False):
     python_path = check_python_binary()
-
     if force_recreate and os.path.exists(VENV_DIR):
         print(f"Removing existing venv in {VENV_DIR}...")
         shutil.rmtree(VENV_DIR, ignore_errors=True)
-
     if not os.path.exists(VENV_DIR):
         print(f"Creating virtual environment in {VENV_DIR}...")
         subprocess.run([python_path, "-m", "venv", VENV_DIR], check=True)
     else:
         print(f"Virtual environment exists in {VENV_DIR}.")
-
     python_cmd = get_python_cmd()
     if not os.path.exists(python_cmd):
         print(f"Recreating venv — Python not found at {python_cmd}")
@@ -94,7 +70,7 @@ def get_python_cmd():
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
-        print("Error: requirements.txt not found in project root.")
+        print("Error: requirements.txt not found.")
         sys.exit(1)
 
     print("Installing dependencies...")
@@ -106,17 +82,20 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"], check=True)
     print("complete")
 
-    # --- NEW: Download model from config ---
+    # === DOWNLOAD SPACY MODEL FROM CONFIG ===
     print("  Step 3/3: Downloading spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
-    spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_sm')
+    spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
-    result = subprocess.run(download_cmd, capture_output=True, text=True)
+    # Force install the correct model version
+    model_install_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--force"]
+    result = subprocess.run(model_install_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"Failed to download '{spacy_model}'. Falling back to 'en_core_web_sm'.")
-        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_sm", "--quiet"], check=True)
+        print(f"\nFailed to download '{spacy_model}'. Output:")
+        print(result.stderr)
+        print("Trying fallback to en_core_web_trf...")
+        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
     else:
         print(f"Downloaded '{spacy_model}'")
     print("complete")
@@ -201,15 +180,15 @@ def run_demo(selected_model):
 
 def main():
     models = [
-        ("all-MiniLM-L12-v2", "Fast, lightweight"),
-        ("all-mpnet-base-v2", "Balanced (default)"),
-        ("multi-qa-MiniLM-L6-cos-v1", "QA-optimized"),
-        ("all-distilroberta-v1", "Good accuracy"),
-        ("paraphrase-MiniLM-L6-v2", "Paraphrase-focused"),
+        ("all-MiniLM-L12-v2", "Fast"),
+        ("all-mpnet-base-v2", "Balanced"),
+        ("multi-qa-MiniLM-L6-cos-v1", "QA"),
+        ("all-distilroberta-v1", "Good"),
+        ("paraphrase-MiniLM-L6-v2", "Paraphrase"),
         ("all-roberta-large-v1", "High accuracy"),
     ]
 
-    print("Select embedding model:")
+    print("Select model:")
     for i, (name, desc) in enumerate(models, 1):
         print(f"  {i}: {name} - {desc}")
     while True:
