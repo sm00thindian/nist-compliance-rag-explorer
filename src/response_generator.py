@@ -112,7 +112,7 @@ def _get_terminal_width() -> int:
 
 
 def _wrap(text: str, width: int, indent: str = "") -> str:
-    """Wrap long text, preserving indent on continuation lines."""
+    """Wrap long text with indent on continuation lines."""
     if not text:
         return ""
     wrapper = textwrap.TextWrapper(width=width - len(indent), subsequent_indent=" " * len(indent))
@@ -138,7 +138,7 @@ def _format_stig_table(recs: list, term_width: int) -> str:
     if not recs:
         return "No specific STIG guidance."
 
-    # Dynamic column widths
+    # === COLUMN WIDTHS ===
     rule_w = 22
     title_w = (term_width - 30) - rule_w - 12  # 12 = padding + borders
     sev_w = 8
@@ -156,7 +156,7 @@ def _format_stig_table(recs: list, term_width: int) -> str:
 
         assessment, fix, details = _parse_stig_fix(rec['fix'])
 
-        # Header line (wrapped title)
+        # === HEADER LINE (wrapped title) ===
         wrapped_title = _wrap(title, title_w)
         title_lines = wrapped_title.splitlines()
         lines.append(
@@ -165,25 +165,25 @@ def _format_stig_table(recs: list, term_width: int) -> str:
         for extra in title_lines[1:]:
             lines.append(f"{Fore.CYAN}│ {'':<{rule_w}} │ {extra:<{title_w}} │ {'':<{sev_w}} │{Style.RESET_ALL}")
 
-        # Assessment
+        # === ASSESSMENT ===
         if assessment:
             wrapped = _wrap(assessment, term_width - 10, "│ Assessment: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # Fix
+        # === FIX ===
         if fix:
             wrapped = _wrap(fix, term_width - 10, "│ Fix: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # Details
+        # === DETAILS (BRIGHT WHITE) ===
         if details:
             wrapped = _wrap(details, term_width - 10, "│ Details: ")
             for line in wrapped.splitlines():
-                lines.append(f"{Fore.WHITE}{Style.DIM}{line}{Style.RESET_ALL}")
+                lines.append(f"{Fore.WHITE}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # Row separator
+        # === ROW SEPARATOR ===
         lines.append(separator)
 
     # Remove last separator
@@ -202,11 +202,11 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     query_lower = query.lower()
     response = []
 
-    # === ORIGINAL QUERY (strip clarification) ===
+    # === ORIGINAL QUERY ===
     original_query = re.sub(r" with technology index \d+$", "", query).strip()
     original_lower = original_query.lower()
 
-    # === QUERY TYPE & CONTROL IDS (always defined) ===
+    # === QUERY TYPE & CONTROLS ===
     is_assessment_query = any(w in original_lower for w in ['assess', 'audit', 'verify', 'check'])
     is_implement_query = any(w in original_lower for w in ['implement', 'configure', 'harden', 'setup'])
     action = "Assessing" if is_assessment_query else "Implementing"
@@ -221,7 +221,6 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     if tech_index_match:
         selected_idx = int(tech_index_match.group(1))
 
-        # Re-build filtered list using original query keywords
         doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
@@ -334,7 +333,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === FINAL RESPONSE (WITH DYNAMIC WRAP) ===
+    # === FINAL RESPONSE ===
     term_width = _get_terminal_width()
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
@@ -355,7 +354,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             if control_id in assessment_procedures:
                 for i, m in enumerate(assessment_procedures[control_id], 1):
                     wrapped = _wrap(m, term_width - 10, f"     {i}. ")
-                    response.extend([f"     {i}. {line}" for line in wrapped.splitlines()[1:]])
+                    response.extend(wrapped.splitlines())
             else:
                 steps = extract_actionable_steps(ctrl['description'])
                 for i, s in enumerate(steps, 1):
@@ -372,7 +371,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             else:
                 response.append(f"     1. Follow the control description to enforce this requirement.")
 
-        # === STIG TABLE (FULL WIDTH, WRAPPED) ===
+        # === STIG TABLE ===
         if selected_techs:
             for tech in selected_techs:
                 recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
