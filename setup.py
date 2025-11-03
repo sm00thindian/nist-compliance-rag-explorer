@@ -4,7 +4,6 @@ import sys
 import shutil
 import configparser
 import hashlib
-from tqdm import tqdm
 
 
 # === PATHS ===
@@ -70,7 +69,7 @@ def get_python_cmd():
     return os.path.join(VENV_DIR, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin", "python3")
 
 
-# === INSTALL REQUIREMENTS WITH PROGRESS BAR ===
+# === INSTALL REQUIREMENTS WITH TQDM (IMPORTED LATER) ===
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -82,14 +81,14 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    # === Import tqdm AFTER venv ===
+    # === IMPORT TQDM ONLY AFTER VENV IS READY ===
     try:
         from tqdm import tqdm as tqdm_lib
         TQDM_AVAILABLE = True
     except ImportError:
         TQDM_AVAILABLE = False
         def tqdm_lib(iterable, **kwargs):
-            return iterable
+            return iterable  # Fallback: no progress bar
 
     print("  Step 2/3: Installing requirements...", flush=True)
     
@@ -100,7 +99,7 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg") if TQDM_AVAILABLE else requirements):
+    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") if TQDM_AVAILABLE else requirements):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
             capture_output=True,
@@ -123,13 +122,9 @@ def install_requirements():
     if spacy_model in check_result.stdout:
         print(f"Model '{spacy_model}' already installed")
     else:
-        # Download with progress (simulate via tqdm on subprocess)
-        download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
         print("\n   Downloading...")
-        with tqdm(total=100, desc="Model", unit="%") as pbar:
-            result = subprocess.run(download_cmd, capture_output=True, text=True)
-            pbar.n = 100  # Simulate completion
-            pbar.refresh()
+        download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
+        result = subprocess.run(download_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"Failed. Falling back to en_core_web_trf...")
             subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
