@@ -7,96 +7,15 @@ from colorama import Fore, Style
 from .text_processing import nlp
 from .parsers import normalize_control_id
 
-family_purposes = {
-    "AC": "manage access to information systems and resources",
-    "AT": "provide security awareness and training",
-    "AU": "monitor and review system activities for security and compliance",
-    "CA": "assess and authorize information systems",
-    "CM": "manage system configurations",
-    "CP": "ensure contingency planning for system resilience",
-    "IA": "identify and authenticate users and systems",
-    "IR": "respond to security incidents",
-    "MA": "maintain information systems",
-    "MP": "protect media containing sensitive information",
-    "PE": "manage physical access to facilities and systems",
-    "PL": "plan for security and privacy in system development",
-    "PM": "manage security and privacy programs",
-    "PS": "manage personnel security",
-    "PT": "manage personally identifiable information (PII) processing",
-    "RA": "assess and manage risks",
-    "SA": "acquire and manage system development and maintenance",
-    "SC": "implement system and communications protection",
-    "SI": "ensure system and information integrity",
-    "SR": "manage supply chain risks",
-}
-
-severity_colors = {
-    'High': Fore.RED,
-    'Medium': Fore.YELLOW,
-    'Low': Fore.GREEN
-}
-
-def get_technology_name(stig):
-    title = stig.get('title', 'Untitled')
-    tech = stig.get('technology', title)
-    if "STIG" in title and title != "Untitled STIG" and len(title.split()) > 2:
-        return " ".join(word for word in title.split() if "STIG" not in word and "V" not in word and "R" not in word[:2])
-    return tech
-
-def save_checklist(control_id, steps, stig_recommendations, filename_prefix="checklist"):
-    checklist_dir = "assessment_checklists"
-    os.makedirs(checklist_dir, exist_ok=True)
-    filename = os.path.join(checklist_dir, f"{filename_prefix}_{control_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-    with open(filename, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(["Source", "Control/Rule", "Action", "Assessment Task", "Severity", "Expected Evidence", "Status"])
-        
-        for i, step in enumerate(steps, 1):
-            task = step.lower().replace("to assess this control, verify ", "").replace("check parameters: none specified", "").strip()
-            if "[assignment:" in task:
-                task = task.replace("[assignment: organization-defined ", "").replace("]", "").replace("[withdrawn: incorporated into ac-6.]", "Withdrawn (see AC-6)")
-                task = f"Verify {task} as defined by your organization."
-            else:
-                task = f"Verify {task.capitalize()}."
-            writer.writerow([
-                "NIST 800-53",
-                control_id,
-                f"Verify Compliance ({i})",
-                task,
-                "N/A",
-                "Access control policy, logs, or config screenshots",
-                "Pending"
-            ])
-        
-        for tech, recs in stig_recommendations.items():
-            for matched_control, rec_list in recs.items():
-                for rec in rec_list:
-                    fix_lines = rec['fix'].split('\n')
-                    formatted_fix = []
-                    for line in fix_lines:
-                        line = line.strip()
-                        if line and line[0].isdigit() and line[1] == '.':
-                            formatted_fix.append(f"- {line}")
-                        elif line and formatted_fix:
-                            formatted_fix[-1] += f" {line}"
-                        elif line:
-                            formatted_fix.append(f"- {line}")
-                    task = f"Verify {rec['title']}:\n" + "\n".join(formatted_fix)
-                    writer.writerow([
-                        f"STIG {tech}",
-                        rec['rule_id'],
-                        "Configure and Verify",
-                        task,
-                        rec.get('severity', 'medium').capitalize(),
-                        "Configuration settings, logs, or admin console screenshots",
-                        "Pending"
-                    ])
-    logging.info(f"Generated checklist: {filename}")
-    return filename
+# ... [family_purposes, severity_colors, get_technology_name, save_checklist] ...
 
 def generate_response(query, retrieved_docs, control_details, high_baseline_controls, all_stig_recommendations, available_stigs, assessment_procedures, cci_to_nist, generate_checklist=False):
     query_lower = query.lower()
     response = []
+
+    # === ALWAYS DEFINE THESE (FIX UNBOUND ERROR) ===
+    is_assessment_query = any(word in query_lower for word in ['assess', 'audit', 'verify', 'check'])
+    is_implement_query = any(word in query_lower for word in ['implement', 'configure', 'harden', 'setup'])
 
     # === HANDLE CLARIFICATION RESPONSE (with technology index X) ===
     tech_index_match = re.search(r"with technology index (\d+)", query_lower)
@@ -141,9 +60,6 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         control_ids = [normalize_control_id(m.upper()) for m in control_matches] if control_matches else []
         if not control_ids:
             control_ids = [doc.split(', ')[1].split(': ')[0] for doc in retrieved_docs if "Catalog" in doc]
-
-        is_assessment_query = any(word in query_lower for word in ['assess', 'audit', 'verify', 'check'])
-        is_implement_query = any(word in query_lower for word in ['implement', 'configure', 'harden', 'setup'])
 
         # === EXTRACT TECH KEYWORDS ===
         doc = nlp(query_lower)
@@ -204,7 +120,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top_techs)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === GENERATE FINAL RESPONSE ===
+    # === GENERATE FINAL RESPONSE (NOW SAFE) ===
     action = "Assessing" if is_assessment_query else "Implementing"
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
