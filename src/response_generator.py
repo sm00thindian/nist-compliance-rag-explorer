@@ -104,33 +104,25 @@ def save_checklist(control_id, steps, stig_recommendations, filename_prefix="che
     return filename
 
 
-def _get_terminal_width():
-    """Return terminal width or fallback."""
+def _get_terminal_width() -> int:
     try:
         return os.get_terminal_size().columns
     except OSError:
-        return 120  # Reasonable default
+        return 120  # fallback
 
 
-def _wrap_text(text: str, width: int, prefix: str = "") -> str:
-    """Wrap text with optional prefix on first line."""
+def _wrap(text: str, width: int, indent: str = "") -> str:
+    """Wrap long text, preserving indent on continuation lines."""
     if not text:
         return ""
-    lines = textwrap.wrap(text, width=width - len(prefix), break_long_words=False, replace_whitespace=False)
-    if not lines:
-        return ""
-    wrapped = f"{prefix}{lines[0]}"
-    for line in lines[1:]:
-        wrapped += f"\n{' ' * len(prefix)}{line}"
-    return wrapped
+    wrapper = textwrap.TextWrapper(width=width - len(indent), subsequent_indent=" " * len(indent))
+    return "\n".join(wrapper.wrap(text))
 
 
 def _parse_stig_fix(fix_text: str):
-    """Return (assessment, fix, details) – each may be empty."""
     assessment = ""
     fix = ""
     details = []
-
     for line in fix_text.splitlines():
         line = line.strip()
         if line.lower().startswith("assessment:"):
@@ -139,16 +131,14 @@ def _parse_stig_fix(fix_text: str):
             fix = line[4:].strip()
         elif line:
             details.append(line)
-
     return assessment, fix, "\n".join(details)
 
 
 def _format_stig_table(recs: list, term_width: int) -> str:
-    """Return a wrapped, fixed-width table."""
     if not recs:
         return "No specific STIG guidance."
 
-    # Column widths (adjustable)
+    # Dynamic column widths
     rule_w = 22
     title_w = (term_width - 30) - rule_w - 12  # 12 = padding + borders
     sev_w = 8
@@ -166,25 +156,32 @@ def _format_stig_table(recs: list, term_width: int) -> str:
 
         assessment, fix, details = _parse_stig_fix(rec['fix'])
 
-        # Header line
+        # Header line (wrapped title)
+        wrapped_title = _wrap(title, title_w)
+        title_lines = wrapped_title.splitlines()
         lines.append(
-            f"{Fore.CYAN}│ {rule:<{rule_w}} │ {_wrap_text(title, title_w, ''):<{title_w}} │ {color}{sev:<{sev_w}}{Style.RESET_ALL} │"
+            f"{Fore.CYAN}│ {rule:<{rule_w}} │ {title_lines[0]:<{title_w}} │ {color}{sev:<{sev_w}}{Style.RESET_ALL} │"
         )
+        for extra in title_lines[1:]:
+            lines.append(f"{Fore.CYAN}│ {'':<{rule_w}} │ {extra:<{title_w}} │ {'':<{sev_w}} │{Style.RESET_ALL}")
 
         # Assessment
         if assessment:
-            wrapped = _wrap_text(assessment, term_width - 10, "│ Assessment: ")
-            lines.extend([f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}" for line in wrapped.splitlines()])
+            wrapped = _wrap(assessment, term_width - 10, "│ Assessment: ")
+            for line in wrapped.splitlines():
+                lines.append(f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
         # Fix
         if fix:
-            wrapped = _wrap_text(fix, term_width - 10, "│ Fix: ")
-            lines.extend([f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}" for line in wrapped.splitlines()])
+            wrapped = _wrap(fix, term_width - 10, "│ Fix: ")
+            for line in wrapped.splitlines():
+                lines.append(f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
         # Details
         if details:
-            wrapped = _wrap_text(details, term_width - 10, "│ Details: ")
-            lines.extend([f"{Fore.WHITE}{Style.DIM}{line}{Style.RESET_ALL}" for line in wrapped.splitlines()])
+            wrapped = _wrap(details, term_width - 10, "│ Details: ")
+            for line in wrapped.splitlines():
+                lines.append(f"{Fore.WHITE}{Style.DIM}{line}{Style.RESET_ALL}")
 
         # Row separator
         lines.append(separator)
@@ -205,11 +202,11 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     query_lower = query.lower()
     response = []
 
-    # === EXTRACT ORIGINAL QUERY ===
+    # === ORIGINAL QUERY (strip clarification) ===
     original_query = re.sub(r" with technology index \d+$", "", query).strip()
     original_lower = original_query.lower()
 
-    # === DEFINE QUERY TYPE & CONTROLS EARLY ===
+    # === QUERY TYPE & CONTROL IDS (always defined) ===
     is_assessment_query = any(w in original_lower for w in ['assess', 'audit', 'verify', 'check'])
     is_implement_query = any(w in original_lower for w in ['implement', 'configure', 'harden', 'setup'])
     action = "Assessing" if is_assessment_query else "Implementing"
@@ -285,7 +282,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append("- No CCI mappings found.")
             return "\n".join(response)
 
-        # === EXTRACT TECH KEYWORDS ===
+        # === TECH KEYWORD DETECTION ===
         doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
@@ -337,7 +334,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === GENERATE FINAL RESPONSE ===
+    # === FINAL RESPONSE (WITH DYNAMIC WRAP) ===
     term_width = _get_terminal_width()
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
@@ -351,18 +348,18 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         ctrl = control_details[control_id]
         response.append(f"{Fore.YELLOW}1. {control_id} - {ctrl['title']}{Style.RESET_ALL}")
         purpose = ctrl['description'].split('.')[0].lower()
-        response.append(f"   - Purpose: {_wrap_text(purpose, term_width - 10, '     ')}")
+        response.append(f"   - Purpose: {_wrap(purpose, term_width - 10, '     ')}")
 
         if is_assessment_query:
             response.append(f"{Fore.CYAN}   Assessment Steps:{Style.RESET_ALL}")
             if control_id in assessment_procedures:
                 for i, m in enumerate(assessment_procedures[control_id], 1):
-                    wrapped = _wrap_text(m, term_width - 10, f"     {i}. ")
+                    wrapped = _wrap(m, term_width - 10, f"     {i}. ")
                     response.extend([f"     {i}. {line}" for line in wrapped.splitlines()[1:]])
             else:
                 steps = extract_actionable_steps(ctrl['description'])
                 for i, s in enumerate(steps, 1):
-                    wrapped = _wrap_text(s, term_width - 10, f"     {i}. ")
+                    wrapped = _wrap(s, term_width - 10, f"     {i}. ")
                     response.extend(wrapped.splitlines())
 
         elif is_implement_query:
@@ -370,7 +367,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             guidance = [doc.split(': ', 1)[1] for doc in retrieved_docs if control_id in doc and "Assessment" not in doc]
             if guidance:
                 for i, g in enumerate(guidance, 1):
-                    wrapped = _wrap_text(g, term_width - 10, f"     {i}. ")
+                    wrapped = _wrap(g, term_width - 10, f"     {i}. ")
                     response.extend(wrapped.splitlines())
             else:
                 response.append(f"     1. Follow the control description to enforce this requirement.")
