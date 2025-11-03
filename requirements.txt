@@ -7,4 +7,4 @@ tqdm
 pandas
 openpyxl
 colorama
-spacy==3.7.2
+spacy>=3.8.0
