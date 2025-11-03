@@ -9,7 +9,6 @@ import hashlib
 # === PATHS ===
 VENV_DIR = "venv"
 KNOWLEDGE_DIR = "knowledge"
-SRC_DIR = "src"  # ← ADD THIS
 
 
 # === PYTHON DISCOVERY ===
@@ -82,6 +81,7 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
+    # Import tqdm AFTER venv
     try:
         from tqdm import tqdm as tqdm_lib
         TQDM_AVAILABLE = True
@@ -99,7 +99,7 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") if TQDM_AVAILABLE else requirements):
+    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg") if TQDM_AVAILABLE else requirements):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
             capture_output=True,
