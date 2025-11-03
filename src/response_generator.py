@@ -313,10 +313,12 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         unique_techs = list(tech_to_stig.keys())
 
+        # === ALWAYS DEFINE selected_techs (FIX) ===
+        selected_techs = []
+
         # === AUTO-SELECT OR PROMPT ===
         if len(unique_techs) == 0:
             response.append(f"{Fore.YELLOW}No STIGs found for this control.{Style.RESET_ALL}")
-            selected_techs = []
         elif len(unique_techs) == 1:
             selected_techs = [tech_to_stig[unique_techs[0]]['technology']]
         elif len(unique_techs) <= 3:
@@ -381,6 +383,8 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                     response.append(_format_stig_table(recs, term_width))
                 else:
                     response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL} No specific guidance.")
+        else:
+            response.append(f"{Fore.YELLOW}No matching STIGs found for your query.{Style.RESET_ALL}")
 
         if generate_checklist:
             steps = extract_actionable_steps(ctrl['description'])
