@@ -16,20 +16,15 @@ The NIST Compliance RAG Explorer is a Python-based tool that leverages Retrieval
 
 ## Installation
 
-### Step 1: Clone the Repository
-```bash
-git clone https://github.com/sm00thindian/nist-compliance-rag-explorer.git
-cd nist-compliance-rag-explorer
-Copy `config/config.ini.template` to `config/config.ini` and update `stig_folder` to your local STIG directory path (e.g., `/path/to/stigs`).
-```
-# Step 2: Install Python Version 3.12
-```
-brew install python@3.12
-```
-# Step 3: Set Up the Environment and Run the Demo
-```
-/opt/homebrew/bin/python3.12 setup.py
-```
+## Prerequisites
+- Python 3.12 installed and in your PATH (verify with `python3.12 --version` or `python --version` on Windows).
+  - Download from https://www.python.org/downloads/.
+- On macOS/Linux: Ensure `python3.12` is available (install via your package manager if needed).
+- On Windows: Install the executable and add to PATH.
+
+## Setup and Run
+1. Run `python3 setup.py` (or `python setup.py` on Windows) from the project root.
+2. Follow prompts to select a model and complete setup.
 This script will:
 
 Create a virtual environment (venv) using Python 3.12.
