@@ -9,6 +9,7 @@ import hashlib
 # === PATHS ===
 VENV_DIR = "venv"
 KNOWLEDGE_DIR = "knowledge"
+SRC_DIR = "src"  # ← ADD THIS
 
 
 # === PYTHON DISCOVERY ===
@@ -69,7 +70,7 @@ def get_python_cmd():
     return os.path.join(VENV_DIR, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin", "python3")
 
 
-# === INSTALL REQUIREMENTS WITH TQDM (IMPORTED LATER) ===
+# === INSTALL REQUIREMENTS ===
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -81,14 +82,13 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    # === IMPORT TQDM ONLY AFTER VENV IS READY ===
     try:
         from tqdm import tqdm as tqdm_lib
         TQDM_AVAILABLE = True
     except ImportError:
         TQDM_AVAILABLE = False
         def tqdm_lib(iterable, **kwargs):
-            return iterable  # Fallback: no progress bar
+            return iterable
 
     print("  Step 2/3: Installing requirements...", flush=True)
     
@@ -110,13 +110,11 @@ def install_requirements():
             print(result.stderr.strip())
             sys.exit(1)
 
-    # === STEP 3: SPAcY MODEL (OPTIMIZED) ===
     print("  Step 3/3: Installing spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    # Check if already installed
     check_cmd = [python_cmd, "-m", "spacy", "validate"]
     check_result = subprocess.run(check_cmd, capture_output=True, text=True)
     if spacy_model in check_result.stdout:
@@ -215,7 +213,15 @@ print('Downloaded')
 def run_demo(selected_model):
     python_cmd = get_python_cmd()
     print(f"\nLaunching demo with model: {selected_model}")
-    subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], check=True)
+    # ADD SRC TO PYTHONPATH
+    env = os.environ.copy()
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src_path = os.path.join(project_root, "src")
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = src_path + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = src_path
+    subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], env=env, check=True)
 
 
 # === RUN TESTS ===
