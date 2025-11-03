@@ -94,14 +94,32 @@ def get_python_cmd():
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
-        print("Error: requirements.txt not found.")
+        print("Error: requirements.txt not found in project root.")
         sys.exit(1)
 
     print("Installing dependencies...")
+    print("  Step 1/3: Upgrading pip...", end=" ", flush=True)
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
+    print("complete")
+
+    print("  Step 2/3: Installing requirements...", end=" ", flush=True)
     subprocess.run([python_cmd, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"], check=True)
-    subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_sm", "--quiet"], check=True)
-    print("Dependencies installed.")
+    print("complete")
+
+    # --- NEW: Download model from config ---
+    print("  Step 3/3: Downloading spaCy model...", end=" ", flush=True)
+    config = configparser.ConfigParser()
+    config.read('config/config.ini')
+    spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_sm')
+
+    download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
+    result = subprocess.run(download_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Failed to download '{spacy_model}'. Falling back to 'en_core_web_sm'.")
+        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_sm", "--quiet"], check=True)
+    else:
+        print(f"Downloaded '{spacy_model}'")
+    print("complete")
 
 
 def download_cci_xml(python_cmd):
