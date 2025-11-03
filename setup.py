@@ -252,8 +252,13 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "test":
-            run_tests()
+            # === RUN TESTS ONLY ===
+            create_virtual_env()
+            install_requirements()
+            download_data()
+            run_tests()  # This exits
         elif sys.argv[1] == "--download-only":
             docker_download_mode()
     else:
+        # === NORMAL MODE ===
         main()
