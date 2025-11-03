@@ -4,89 +4,88 @@ import sys
 import shutil
 import configparser
 import hashlib
-import platform
+
 
 VENV_DIR = "venv"
 KNOWLEDGE_DIR = "knowledge"
 
 
-def find_python_312():
+def find_python_310_or_311():
     """
-    Dynamically locate Python 3.12 executable in the system PATH.
-    - Unix/macOS: Looks for 'python3.12' or 'python3' (if version is 3.12)
-    - Windows: Looks for 'python.exe' and verifies version
-    Returns full path to executable if found and version is 3.12.x, else None.
+    Dynamically locate Python 3.10 or 3.11 executable in PATH.
+    Returns (path, version_string) if found, else (None, None).
     """
     candidates = []
 
     if sys.platform == "win32":
-        # On Windows, typically just 'python' (no version suffix)
         python_exe = shutil.which("python")
         if python_exe:
             candidates.append(python_exe)
     else:
-        # Unix-like: Prefer version-suffixed
-        python_312 = shutil.which("python3.12")
-        if python_312:
-            candidates.append(python_312)
-        # Fallback: Check if 'python3' is actually 3.12
-        python3 = shutil.which("python3")
-        if python3:
-            candidates.append(python3)
+        # Try version-suffixed first
+        for suffix in ["3.11", "3.10"]:
+            exe = shutil.which(f"python{suffix}")
+            if exe:
+                candidates.append(exe)
+        # Fallback: try 'python3' or 'python'
+        for name in ["python3", "python"]:
+            exe = shutil.which(name)
+            if exe:
+                candidates.append(exe)
 
     for candidate in candidates:
         try:
             version_output = subprocess.check_output(
-                [candidate, "--version"], 
-                stderr=subprocess.STDOUT, 
+                [candidate, "--version"],
+                stderr=subprocess.STDOUT,
                 text=True
             ).strip()
-            if version_output.startswith("Python 3.12"):
-                return candidate
+            if version_output.startswith("Python 3.10") or version_output.startswith("Python 3.11"):
+                return candidate, version_output
         except (subprocess.CalledProcessError, FileNotFoundError, PermissionError):
             continue
 
-    return None
+    return None, None
 
 
 def check_python_binary():
     """
-    Validate that Python 3.12 is available. If not, provide clear installation instructions.
-    Returns the path to the Python 3.12 executable.
+    Ensure Python 3.10 or 3.11 is available.
+    Returns the path to the valid Python executable.
     """
-    python_312_path = find_python_312()
-    if not python_312_path:
-        print("Error: Python 3.12 not found in your system PATH.")
+    python_path, version = find_python_310_or_311()
+    if not python_path:
+        print("Error: Python 3.10 or 3.11 not found in your system PATH.")
         print("")
-        print("Please install Python 3.12 and ensure it's accessible from the command line:")
+        print("This project requires Python 3.10 or 3.11 due to spaCy 3.7.2 compatibility.")
         print("  - Download from: https://www.python.org/downloads/")
         print("")
         if sys.platform == "darwin":
-            print("  macOS: Install via .pkg from python.org (recommended) or your package manager.")
-            print("         After install, add to PATH or use full path.")
+            print("  macOS: Use the official .pkg installer (recommended)")
+            print("         Or: `brew install python@3.11` (if you use Homebrew)")
         elif sys.platform.startswith("linux"):
-            print("  Linux: Use your package manager (e.g., 'sudo apt install python3.12' on Ubuntu)")
-            print("         Or install from python.org.")
+            print("  Linux: `sudo apt install python3.11` (Ubuntu/Debian)")
+            print("         Or download from python.org")
         elif sys.platform == "win32":
-            print("  Windows: Run the installer and check 'Add Python to PATH'.")
-            print("           Verify with: python --version")
+            print("  Windows: Run installer and check 'Add Python to PATH'")
+            print("           Verify: python --version")
         else:
-            print("  Install Python 3.12 from https://www.python.org/downloads/ and add to PATH.")
+            print("  Install Python 3.10 or 3.11 from python.org")
         print("")
-        print("After installation, verify with:")
-        print("  python3.12 --version   (macOS/Linux)")
+        print("Verify with:")
+        print("  python3.11 --version   (macOS/Linux)")
         print("  python --version       (Windows)")
         sys.exit(1)
 
-    print(f"Using Python 3.12 at {python_312_path}")
-    return python_312_path
+    print(f"Using {version} at {python_path}")
+    return python_path
 
 
 def create_virtual_env(force_recreate=False):
     """
-    Create a virtual environment using the detected Python 3.12.
+    Create virtual environment using detected Python 3.10/3.11.
     """
-    python_312_path = check_python_binary()
+    python_path = check_python_binary()
 
     if force_recreate and os.path.exists(VENV_DIR):
         print(f"Removing existing virtual environment in {VENV_DIR}...")
@@ -94,24 +93,23 @@ def create_virtual_env(force_recreate=False):
 
     if not os.path.exists(VENV_DIR):
         print(f"Creating virtual environment in {VENV_DIR}...")
-        result = subprocess.run([python_312_path, "-m", "venv", VENV_DIR])
+        result = subprocess.run([python_path, "-m", "venv", VENV_DIR])
         if result.returncode != 0:
             print("Failed to create virtual environment.")
             sys.exit(1)
     else:
         print(f"Virtual environment already exists in {VENV_DIR}.")
 
-    # Verify venv Python exists
     python_cmd = get_python_cmd()
     if not os.path.exists(python_cmd):
         print(f"Virtual environment Python not found at {python_cmd}. Recreating...")
         shutil.rmtree(VENV_DIR, ignore_errors=True)
-        subprocess.run([python_312_path, "-m", "venv", VENV_DIR], check=True)
+        subprocess.run([python_path, "-m", "venv", VENV_DIR], check=True)
 
 
 def get_python_cmd():
     """
-    Return the path to the Python executable inside the virtual environment.
+    Return path to Python executable inside the virtual environment.
     """
     if sys.platform == "win32":
         return os.path.join(VENV_DIR, "Scripts", "python.exe")
@@ -121,7 +119,7 @@ def get_python_cmd():
 
 def install_requirements():
     """
-    Install dependencies from requirements.txt into the virtual environment.
+    Install project dependencies into the virtual environment.
     """
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -133,7 +131,7 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    print("  Step 2/3: Installing requirements from requirements.txt...", end=" ", flush=True)
+    print("  Step 2/3: Installing requirements...", end=" ", flush=True)
     subprocess.run([python_cmd, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"], check=True)
     print("complete")
 
@@ -144,13 +142,14 @@ def install_requirements():
 
 def download_cci_xml(python_cmd):
     """
-    Download and extract CCI XML file if not already present.
+    Download and extract CCI XML if not present.
     """
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     cci_file = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
     config = configparser.ConfigParser()
     config.read('config/config.ini')
-    cci_url = config.get('DEFAULT', 'cci_url', fallback='https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip')
+    cci_url = config.get('DEFAULT', 'cci_url',
+                         fallback='https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip')
 
     if os.path.exists(cci_file):
         print(f"{cci_file} already exists.")
@@ -158,7 +157,7 @@ def download_cci_xml(python_cmd):
 
     print("Downloading CCI XML...")
     subprocess.run([python_cmd, "-m", "pip", "install", "requests"], check=True)
-    subprocess.run([python_cmd, "-c", f"""
+    script = f"""
 import requests, zipfile, os, sys
 url = '{cci_url}'
 try:
@@ -173,9 +172,10 @@ try:
     os.remove('U_CCI_List.zip')
     print('Downloaded and extracted U_CCI_List.xml')
 except Exception as e:
-    print(f'Failed to download CCI XML: {{e}}', file=sys.stderr)
+    print(f'Error: {{e}}', file=sys.stderr)
     sys.exit(1)
-"""], check=True)
+"""
+    subprocess.run([python_cmd, "-c", script], check=True)
 
 
 def get_file_hash(file_path):
@@ -189,7 +189,7 @@ def get_file_hash(file_path):
 
 def download_nist_attack_mapping(python_cmd):
     """
-    Download NIST 800-53 to MITRE ATT&CK mapping if not present or outdated.
+    Download NIST to ATT&CK mapping if missing or outdated.
     """
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     mapping_file = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_attack-14.1-enterprise_json.json")
@@ -202,52 +202,42 @@ def download_nist_attack_mapping(python_cmd):
     if os.path.exists(mapping_file):
         print(f"Checking if {os.path.basename(mapping_file)} is up-to-date...")
         try:
-            # Get remote hash
             remote_hash_script = f"""
-import requests, hashlib, sys
+import requests, hashlib
 r = requests.get('{mapping_url}', stream=True)
 r.raise_for_status()
-remote_hash = hashlib.sha256(r.content).hexdigest()
-with open('remote_hash.txt', 'w') as f:
-    f.write(remote_hash)
+print(hashlib.sha256(r.content).hexdigest())
 """
-            subprocess.run([python_cmd, "-c", remote_hash_script], check=True)
-            with open("remote_hash.txt", "r") as f:
-                remote_hash = f.read().strip()
-            os.remove("remote_hash.txt")
-
+            result = subprocess.run([python_cmd, "-c", remote_hash_script], capture_output=True, text=True, check=True)
+            remote_hash = result.stdout.strip()
             local_hash = get_file_hash(mapping_file)
             if local_hash == remote_hash:
-                print(f"{os.path.basename(mapping_file)} is already up-to-date.")
+                print(f"{os.path.basename(mapping_file)} is up-to-date.")
                 should_download = False
         except Exception as e:
-            print(f"Could not verify update: {e}. Will download fresh copy.")
+            print(f"Update check failed ({e}). Will download fresh copy.")
 
     if should_download:
-        print("Downloading NIST 800-53 to MITRE ATT&CK mapping...")
+        print("Downloading NIST 800-53 to ATT&CK mapping...")
         download_script = f"""
-import requests, os, sys
+import requests, os
 url = '{mapping_url}'
-try:
-    r = requests.get(url, stream=True)
-    r.raise_for_status()
-    with open('{mapping_file}', 'wb') as f:
-        for chunk in r.iter_content(8192):
-            f.write(chunk)
-    print('Downloaded mapping to {mapping_file}')
-except Exception as e:
-    print(f'Failed to download mapping: {{e}}', file=sys.stderr)
-    sys.exit(1)
+r = requests.get(url, stream=True)
+r.raise_for_status()
+with open('{mapping_file}', 'wb') as f:
+    for chunk in r.iter_content(8192):
+        f.write(chunk)
+print('Downloaded to {mapping_file}')
 """
         subprocess.run([python_cmd, "-c", download_script], check=True)
 
 
 def run_demo(selected_model):
     """
-    Launch the main demo application.
+    Launch the main application.
     """
     python_cmd = get_python_cmd()
-    print(f"Starting NIST Compliance RAG Demo with model: {selected_model}")
+    print(f"\nStarting NIST Compliance RAG Demo (model: {selected_model})")
     subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], check=True)
 
 
@@ -262,7 +252,7 @@ def main():
         ("all-roberta-large-v1", "High accuracy, memory-intensive.")
     ]
 
-    print("Select a SentenceTransformer model for embeddings:")
+    print("Select a SentenceTransformer model:")
     for i, (name, desc) in enumerate(models, 1):
         print(f"  {i}: {name} - {desc}")
     while True:
@@ -270,13 +260,13 @@ def main():
             choice = int(input("\nEnter number (1-6): "))
             if 1 <= choice <= len(models):
                 break
-            print(f"Please enter a number between 1 and {len(models)}.")
+            print(f"Please enter 1–{len(models)}.")
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            print("Please enter a number.")
     selected_model = models[choice - 1][0]
-    print(f"Selected model: {selected_model}\n")
+    print(f"Selected: {selected_model}\n")
 
-    # Setup steps
+    # Setup
     create_virtual_env(force_recreate=False)
     install_requirements()
 
@@ -284,7 +274,7 @@ def main():
     download_cci_xml(python_cmd)
     download_nist_attack_mapping(python_cmd)
 
-    # Run demo
+    # Run
     run_demo(selected_model)
 
 
