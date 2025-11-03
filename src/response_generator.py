@@ -7,6 +7,9 @@ from colorama import Fore, Style
 from .text_processing import nlp
 from .parsers import normalize_control_id
 
+# ----------------------------------------------------------------------
+#  CONSTANTS
+# ----------------------------------------------------------------------
 family_purposes = {
     "AC": "manage access to information systems and resources",
     "AT": "provide security awareness and training",
@@ -36,12 +39,17 @@ severity_colors = {
     'Low': Fore.GREEN
 }
 
+
+# ----------------------------------------------------------------------
+#  HELPERS
+# ----------------------------------------------------------------------
 def get_technology_name(stig):
     title = stig.get('title', 'Untitled')
     tech = stig.get('technology', title)
     if "STIG" in title and title != "Untitled STIG" and len(title.split()) > 2:
         return " ".join(word for word in title.split() if "STIG" not in word and "V" not in word and "R" not in word[:2])
     return tech
+
 
 def save_checklist(control_id, steps, stig_recommendations, filename_prefix="checklist"):
     checklist_dir = "assessment_checklists"
@@ -50,7 +58,7 @@ def save_checklist(control_id, steps, stig_recommendations, filename_prefix="che
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(["Source", "Control/Rule", "Action", "Assessment Task", "Severity", "Expected Evidence", "Status"])
-        
+
         for i, step in enumerate(steps, 1):
             task = step.lower().replace("to assess this control, verify ", "").replace("check parameters: none specified", "").strip()
             if "[assignment:" in task:
@@ -67,7 +75,7 @@ def save_checklist(control_id, steps, stig_recommendations, filename_prefix="che
                 "Access control policy, logs, or config screenshots",
                 "Pending"
             ])
-        
+
         for tech, recs in stig_recommendations.items():
             for matched_control, rec_list in recs.items():
                 for rec in rec_list:
@@ -94,17 +102,95 @@ def save_checklist(control_id, steps, stig_recommendations, filename_prefix="che
     logging.info(f"Generated checklist: {filename}")
     return filename
 
-def generate_response(query, retrieved_docs, control_details, high_baseline_controls, all_stig_recommendations, available_stigs, assessment_procedures, cci_to_nist, generate_checklist=False):
+
+def _parse_stig_fix(fix_text: str):
+    """Return (assessment, fix, details) – each may be empty."""
+    assessment = ""
+    fix = ""
+    details = []
+
+    for line in fix_text.splitlines():
+        line = line.strip()
+        if line.lower().startswith("assessment:"):
+            assessment = line[11:].strip()
+        elif line.lower().startswith("fix:"):
+            fix = line[4:].strip()
+        elif line:
+            details.append(line)
+
+    return assessment, fix, "\n".join(details)
+
+
+def _format_stig_table(recs: list) -> str:
+    """Return a markdown-style table with full text."""
+    if not recs:
+        return "No specific STIG guidance."
+
+    lines = [
+        f"{Fore.CYAN}│ {'Rule ID':<20} │ {'Title':<50} │ {'Severity':<8} │{Style.RESET_ALL}",
+        f"{Fore.CYAN}├{'─' * 22}┼{'─' * 52}┼{'─' * 10}┤{Style.RESET_ALL}"
+    ]
+
+    for rec in recs:
+        rule = rec.get('rule_id', 'N/A')
+        title = rec['title'][:49] + "…" if len(rec['title']) > 49 else rec['title']
+        sev = rec.get('severity', 'medium').capitalize()
+        color = severity_colors.get(sev, Fore.WHITE)
+
+        assessment, fix, details = _parse_stig_fix(rec['fix'])
+
+        # Header line for the rule
+        lines.append(
+            f"{Fore.CYAN}│ {rule:<20} │ {title:<50} │ {color}{sev:<8}{Style.RESET_ALL} │{Style.RESET_ALL}"
+        )
+
+        # Assessment
+        if assessment:
+            lines.append(
+                f"{Fore.MAGENTA}{Style.BRIGHT}│ Assessment:{Style.RESET_ALL} {assessment}"
+            )
+
+        # Fix
+        if fix:
+            lines.append(
+                f"{Fore.GREEN}{Style.BRIGHT}│ Fix:{Style.RESET_ALL} {fix}"
+            )
+
+        # Details (full text, wrapped)
+        if details:
+            for part in details.split('\n'):
+                lines.append(f"{Fore.WHITE}{Style.DIM}│ Details:{Style.RESET_ALL} {part}")
+
+        # Separator
+        lines.append(f"{Fore.CYAN}├{'─' * 22}┼{'─' * 52}┼{'─' * 10}┤{Style.RESET_ALL}")
+
+    # Remove last separator
+    if lines[-1].startswith(f"{Fore.CYAN}├"):
+        lines.pop()
+
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------
+#  MAIN GENERATOR
+# ----------------------------------------------------------------------
+def generate_response(query, retrieved_docs, control_details, high_baseline_controls,
+                      all_stig_recommendations, available_stigs, assessment_procedures,
+                      cci_to_nist, generate_checklist=False):
     query_lower = query.lower()
     response = []
 
-    # === EXTRACT ORIGINAL QUERY ===
+    # ------------------------------------------------------------------
+    #  EXTRACT ORIGINAL QUERY (strip clarification suffix)
+    # ------------------------------------------------------------------
     original_query = re.sub(r" with technology index \d+$", "", query).strip()
     original_lower = original_query.lower()
 
-    # === DEFINE QUERY TYPE & CONTROLS EARLY ===
-    is_assessment_query = any(word in original_lower for word in ['assess', 'audit', 'verify', 'check'])
-    is_implement_query = any(word in original_lower for word in ['implement', 'configure', 'harden', 'setup'])
+    # ------------------------------------------------------------------
+    #  QUERY TYPE & CONTROL IDS (defined early – no UnboundLocalError)
+    # ------------------------------------------------------------------
+    is_assessment_query = any(w in original_lower for w in ['assess', 'audit', 'verify', 'check'])
+    is_implement_query = any(w in original_lower for w in ['implement', 'configure', 'harden', 'setup'])
     action = "Assessing" if is_assessment_query else "Implementing"
 
     control_matches = re.findall(r"(\w{2}-\d+(?:\([a-z0-9]+\))?)", original_lower, re.IGNORECASE)
@@ -112,11 +198,14 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     if not control_ids:
         control_ids = [doc.split(', ')[1].split(': ')[0] for doc in retrieved_docs if "Catalog" in doc]
 
-    # === HANDLE CLARIFICATION RESPONSE ===
+    # ------------------------------------------------------------------
+    #  CLARIFICATION RESPONSE (with technology index X)
+    # ------------------------------------------------------------------
     tech_index_match = re.search(r"with technology index (\d+)", query_lower)
     if tech_index_match:
         selected_idx = int(tech_index_match.group(1))
-        # === REBUILD FILTERED LIST FROM ORIGINAL QUERY ===
+
+        # Re-build filtered list using original query keywords
         doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
@@ -130,24 +219,21 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             'tippingpoint': ['tippingpoint', 'trend micro'],
         }
         for token in doc:
-            token_lower = token.text.lower()
-            for tech, patterns in tech_patterns.items():
-                if any(p in token_lower for p in patterns):
+            t = token.text.lower()
+            for tech, pats in tech_patterns.items():
+                if any(p in t for p in pats):
                     tech_keywords.append(tech)
                     break
         tech_keywords = list(set(tech_keywords))
 
-        filtered_stigs = []
-        if tech_keywords:
-            for stig in available_stigs:
-                if any(kw in stig['title'].lower() for kw in tech_keywords):
-                    filtered_stigs.append(stig)
-        else:
-            filtered_stigs = available_stigs
+        filtered_stigs = [
+            s for s in available_stigs
+            if any(kw in s['title'].lower() for kw in tech_keywords)
+        ] if tech_keywords else available_stigs
 
-        tech_to_stig = {i+1: stig for i, stig in enumerate(filtered_stigs)}
+        tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         if selected_idx == 0:
-            selected_techs = [stig['technology'] for stig in tech_to_stig.values()]
+            selected_techs = [s['technology'] for s in tech_to_stig.values()]
         elif 1 <= selected_idx <= len(tech_to_stig):
             selected_techs = [tech_to_stig[selected_idx]['technology']]
         else:
@@ -155,7 +241,9 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             return "\n".join(response)
         logging.debug(f"Clarification: using index {selected_idx} → {selected_techs}")
     else:
-        # === NORMAL QUERY PROCESSING ===
+        # ------------------------------------------------------------------
+        #  NORMAL QUERY PROCESSING
+        # ------------------------------------------------------------------
         cci_match = re.search(r"(cci-\d+)", original_lower)
         if cci_match:
             cci_id = cci_match.group(1).upper()
@@ -180,7 +268,9 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append("- No CCI mappings found.")
             return "\n".join(response)
 
-        # === EXTRACT TECH KEYWORDS ===
+        # ------------------------------------------------------------------
+        #  TECH KEYWORD DETECTION
+        # ------------------------------------------------------------------
         doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
@@ -194,28 +284,28 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             'tippingpoint': ['tippingpoint', 'trend micro'],
         }
         for token in doc:
-            token_lower = token.text.lower()
-            for tech, patterns in tech_patterns.items():
-                if any(p in token_lower for p in patterns):
+            t = token.text.lower()
+            for tech, pats in tech_patterns.items():
+                if any(p in t for p in pats):
                     tech_keywords.append(tech)
                     break
         tech_keywords = list(set(tech_keywords))
         logging.debug(f"Detected tech keywords: {tech_keywords}")
 
-        # === FILTER STIGS BY KEYWORDS ===
-        filtered_stigs = []
-        if tech_keywords:
-            for stig in available_stigs:
-                if any(kw in stig['title'].lower() for kw in tech_keywords):
-                    filtered_stigs.append(stig)
-        else:
-            filtered_stigs = available_stigs
+        # ------------------------------------------------------------------
+        #  FILTER STIGS
+        # ------------------------------------------------------------------
+        filtered_stigs = [
+            s for s in available_stigs
+            if any(kw in s['title'].lower() for kw in tech_keywords)
+        ] if tech_keywords else available_stigs
 
-        # === BUILD INDEX FROM FILTERED LIST ===
-        tech_to_stig = {i+1: stig for i, stig in enumerate(filtered_stigs)}
+        tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         unique_techs = list(tech_to_stig.keys())
 
-        # === AUTO-SELECT OR PROMPT ===
+        # ------------------------------------------------------------------
+        #  AUTO-SELECT OR PROMPT
+        # ------------------------------------------------------------------
         if len(unique_techs) == 0:
             response.append(f"{Fore.YELLOW}No STIGs found for this control.{Style.RESET_ALL}")
             selected_techs = []
@@ -224,19 +314,21 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         elif len(unique_techs) <= 3:
             response.append(f"{Fore.CYAN}Auto-selected {len(unique_techs)} matching tech(s):{Style.RESET_ALL}")
             for idx in unique_techs:
-                stig = tech_to_stig[idx]
-                response.append(f"- {stig['technology']} ({stig['title'][:60]}...)")
-                selected_techs.append(stig['technology'])
+                s = tech_to_stig[idx]
+                response.append(f"- {s['technology']} ({s['title'][:60]}...)")
+                selected_techs.append(s['technology'])
         else:
-            top_techs = unique_techs[:5]
+            top = unique_techs[:5]
             response.append(f"{Fore.CYAN}Multiple STIGs available ({len(unique_techs)} total). Showing top 5:{Style.RESET_ALL}")
-            for i, idx in enumerate(top_techs, 1):
-                stig = tech_to_stig[idx]
-                response.append(f"{i}. {stig['technology']} - {stig['title'][:70]}...")
-            response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top_techs)}, or 0 for all) to proceed.")
+            for i, idx in enumerate(top, 1):
+                s = tech_to_stig[idx]
+                response.append(f"{i}. {s['technology']} - {s['title'][:70]}...")
+            response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === GENERATE FINAL RESPONSE ===
+    # ------------------------------------------------------------------
+    #  FINAL RESPONSE
+    # ------------------------------------------------------------------
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
 
@@ -250,75 +342,45 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         response.append(f"{Fore.YELLOW}1. {control_id} - {ctrl['title']}{Style.RESET_ALL}")
         response.append(f"   - Purpose: {ctrl['description'].split('.')[0].lower()}.")
 
+        # --------------------------------------------------------------
+        #  ASSESSMENT / IMPLEMENTATION
+        # --------------------------------------------------------------
         if is_assessment_query:
             response.append(f"{Fore.CYAN}   Assessment Steps:{Style.RESET_ALL}")
             if control_id in assessment_procedures:
-                for i, method in enumerate(assessment_procedures[control_id], 1):
-                    response.append(f"     {i}. {method}")
+                for i, m in enumerate(assessment_procedures[control_id], 1):
+                    response.append(f"     {i}. {m}")
             else:
                 steps = extract_actionable_steps(ctrl['description'])
-                for i, step in enumerate(steps, 1):
-                    response.append(f"     {i}. {step}")
+                for i, s in enumerate(steps, 1):
+                    response.append(f"     {i}. {s}")
                 if ctrl.get('parameters'):
                     response.append(f"     {len(steps)+1}. Confirm parameters: {', '.join(ctrl['parameters'])}")
-
-            if selected_techs:
-                for tech in selected_techs:
-                    recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
-                    if recs:
-                        response.append(f"{Fore.CYAN}   STIG Checks for {tech}:{Style.RESET_ALL}")
-                        for i, rec in enumerate(recs, 1):
-                            severity = rec.get('severity', 'medium').capitalize()
-                            color = severity_colors.get(severity, Fore.WHITE)
-                            
-                            fix_lines = rec['fix'].split('\n')
-                            assessment_line = next((l.strip() for l in fix_lines if l.strip().lower().startswith("assessment:")), "")
-                            fix_line = next((l.strip() for l in fix_lines if l.strip().lower().startswith("fix:")), "")
-                            other_lines = [l.strip() for l in fix_lines if not l.strip().lower().startswith(("assessment:", "fix:")) and l.strip()]
-                            
-                            response.append(f"     {i}. {rec['title']} (Rule {rec['rule_id']})")
-                            if assessment_line:
-                                response.append(f"        {Fore.MAGENTA}{Style.BRIGHT}Assessment:{Style.RESET_ALL} {assessment_line[11:]}")
-                            if fix_line:
-                                response.append(f"        {Fore.GREEN}{Style.BRIGHT}Fix:{Style.RESET_ALL} {fix_line[4:]}")
-                            if other_lines:
-                                response.append(f"        {Fore.WHITE}{Style.DIM}Details:{Style.RESET_ALL} {' '.join(other_lines)[:200]}{'...' if len(' '.join(other_lines)) > 200 else ''}")
-                            response.append(f"        {color}Severity: {severity}{Style.RESET_ALL}")
-                    else:
-                        response.append(f"{Fore.CYAN}   STIG Checks for {tech}:{Style.RESET_ALL} No specific checks.")
 
         elif is_implement_query:
             response.append(f"{Fore.CYAN}   Implementation Guidance:{Style.RESET_ALL}")
             guidance = [doc.split(': ', 1)[1] for doc in retrieved_docs if control_id in doc and "Assessment" not in doc]
             if guidance:
-                for i, step in enumerate(guidance, 1):
-                    response.append(f"     {i}. {step}")
+                for i, g in enumerate(guidance, 1):
+                    response.append(f"     {i}. {g}")
             else:
                 response.append(f"     1. Follow the control description to enforce this requirement.")
 
-            if selected_techs:
-                for tech in selected_techs:
-                    recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
-                    if recs:
-                        response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL}")
-                        for i, rec in enumerate(recs, 1):
-                            short_title = rec['title'][:50] + "..." if len(rec['title']) > 50 else rec['title']
-                            
-                            fix_lines = rec['fix'].split('\n')
-                            assessment_line = next((l.strip() for l in fix_lines if l.strip().lower().startswith("assessment:")), "")
-                            fix_line = next((l.strip() for l in fix_lines if l.strip().lower().startswith("fix:")), "")
-                            other_lines = [l.strip() for l in fix_lines if not l.strip().lower().startswith(("assessment:", "fix:")) and l.strip()]
-                            
-                            response.append(f"     {i}. {short_title} (Rule {rec['rule_id']})")
-                            if assessment_line:
-                                response.append(f"        {Fore.MAGENTA}{Style.BRIGHT}Assessment:{Style.RESET_ALL} {assessment_line[11:]}")
-                            if fix_line:
-                                response.append(f"        {Fore.GREEN}{Style.BRIGHT}Fix:{Style.RESET_ALL} {fix_line[4:]}")
-                            if other_lines:
-                                response.append(f"        {Fore.WHITE}{Style.DIM}Details:{Style.RESET_ALL} {' '.join(other_lines)[:200]}{'...' if len(' '.join(other_lines)) > 200 else ''}")
-                    else:
-                        response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL} No specific guidance.")
+        # --------------------------------------------------------------
+        #  STIG TABLE (FULL TEXT)
+        # --------------------------------------------------------------
+        if selected_techs:
+            for tech in selected_techs:
+                recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
+                if recs:
+                    response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL}")
+                    response.append(_format_stig_table(recs))
+                else:
+                    response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL} No specific guidance.")
 
+        # --------------------------------------------------------------
+        #  CHECKLIST
+        # --------------------------------------------------------------
         if generate_checklist:
             steps = extract_actionable_steps(ctrl['description'])
             stig_recs = {
