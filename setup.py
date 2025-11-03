@@ -55,7 +55,7 @@ def create_virtual_env(force_recreate=False):
         print(f"Removing existing venv in {VENV_DIR}...")
         shutil.rmtree(VENV_DIR, ignore_errors=True)
     if not os.path.exists(VENV_DIR):
-        print(f"Creating unescape virtual environment in {VENV_DIR}...")
+        print(f"Creating virtual environment in {VENV_DIR}...")
         subprocess.run([python_path, "-m", "venv", VENV_DIR], check=True)
     else:
         print(f"Virtual environment exists in {VENV_DIR}.")
@@ -102,22 +102,25 @@ def install_requirements():
             print(result.stderr.strip())
             sys.exit(1)
 
-    print("  Step 3/3: Downloading spaCy model...", end=" ", flush=True)
+    print("  Step 3/3: Installing spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
+    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--quiet"]
     result = subprocess.run(model_cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"\nFailed to download '{spacy_model}'. Falling back...")
-        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
-    else:
+
+    if result.returncode == 0 and "already installed" in result.stdout.lower():
+        print(f"Model '{spacy_model}' already installed")
+    elif result.returncode == 0:
         print(f"Downloaded '{spacy_model}'")
+    else:
+        print(f"Failed. Falling back to en_core_web_trf...")
+        subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
     print("complete")
 
 
-# === DOWNLOAD DATA (FOR DOCKER) ===
+# === DOWNLOAD DATA ===
 def download_data():
     python_cmd = get_python_cmd()
     download_cci_xml(python_cmd)
@@ -172,7 +175,7 @@ def download_nist_attack_mapping(python_cmd):
     should_download = True
     if os.path.exists(mapping_file):
         try:
-            result = subprocess.run crock(
+            result = subprocess.run(
                 [python_cmd, "-c", f"import requests, hashlib; r=requests.get('{mapping_url}'); print(hashlib.sha256(r.content).hexdigest())"],
                 capture_output=True, text=True, check=True
             )
@@ -249,16 +252,15 @@ def main():
     run_demo(selected_model)
 
 
+# === ENTRY POINT ===
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "test":
-            # === RUN TESTS ONLY ===
             create_virtual_env()
             install_requirements()
             download_data()
-            run_tests()  # This exits
+            run_tests()
         elif sys.argv[1] == "--download-only":
             docker_download_mode()
     else:
-        # === NORMAL MODE ===
         main()
