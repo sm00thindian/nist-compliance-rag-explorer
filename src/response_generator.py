@@ -98,9 +98,20 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     query_lower = query.lower()
     response = []
 
-    # === ALWAYS DEFINE QUERY TYPE ===
-    is_assessment_query = any(word in query_lower for word in ['assess', 'audit', 'verify', 'check'])
-    is_implement_query = any(word in query_lower for word in ['implement', 'configure', 'harden', 'setup'])
+    # === EXTRACT ORIGINAL QUERY (BEFORE CLARIFICATION) ===
+    original_query = re.sub(r" with technology index \d+$", "", query).strip()
+    original_lower = original_query.lower()
+
+    # === ALWAYS DEFINE THESE (FIX UNBOUND ERROR) ===
+    is_assessment_query = any(word in original_lower for word in ['assess', 'audit', 'verify', 'check'])
+    is_implement_query = any(word in original_lower for word in ['implement', 'configure', 'harden', 'setup'])
+    action = "Assessing" if is_assessment_query else "Implementing"
+
+    # === EXTRACT CONTROL IDS FROM ORIGINAL QUERY ===
+    control_matches = re.findall(r"(\w{2}-\d+(?:\([a-z0-9]+\))?)", original_lower, re.IGNORECASE)
+    control_ids = [normalize_control_id(m.upper()) for m in control_matches] if control_matches else []
+    if not control_ids:
+        control_ids = [doc.split(', ')[1].split(': ')[0] for doc in retrieved_docs if "Catalog" in doc]
 
     # === HANDLE CLARIFICATION RESPONSE ===
     tech_index_match = re.search(r"with technology index (\d+)", query_lower)
@@ -117,7 +128,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         logging.debug(f"Clarification: using tech index {selected_idx} → {selected_techs}")
     else:
         # === NORMAL QUERY PROCESSING ===
-        cci_match = re.search(r"(cci-\d+)", query_lower)
+        cci_match = re.search(r"(cci-\d+)", original_lower)
         if cci_match:
             cci_id = cci_match.group(1).upper()
             nist_control = cci_to_nist.get(cci_id, "Not mapped to NIST 800-53 Rev 5")
@@ -130,7 +141,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append(f"- **Description:** {ctrl['description']}")
             return "\n".join(response)
 
-        reverse_match = re.search(r"(?:list|show)?\s*cci\s*mappings\s*for\s*(\w{2}-\d+(?:\s*[a-z])?(?:\([a-z0-9]+\))?)", query_lower)
+        reverse_match = re.search(r"(?:list|show)?\s*cci\s*mappings\s*for\s*(\w{2}-\d+(?:\s*[a-z])?(?:\([a-z0-9]+\))?)", original_lower)
         if reverse_match:
             control_id = normalize_control_id(reverse_match.group(1).upper())
             matching_ccis = [cci for cci, nist in cci_to_nist.items() if normalize_control_id(nist) == control_id]
@@ -141,18 +152,13 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append("- No CCI mappings found.")
             return "\n".join(response)
 
-        control_matches = re.findall(r"(\w{2}-\d+(?:\([a-z0-9]+\))?)", query_lower, re.IGNORECASE)
-        control_ids = [normalize_control_id(m.upper()) for m in control_matches] if control_matches else []
-        if not control_ids:
-            control_ids = [doc.split(', ')[1].split(': ')[0] for doc in retrieved_docs if "Catalog" in doc]
-
-        # === EXTRACT TECH KEYWORDS ===
-        doc = nlp(query_lower)
+        # === EXTRACT TECH KEYWORDS FROM ORIGINAL QUERY ===
+        doc = nlp(original_lower)
         tech_keywords = []
         tech_patterns = {
             'windows': ['windows', 'microsoft', 'win', 'ms', 'windows 10', 'windows server'],
-            'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux'],
-            '/ios': ['ios', 'ipad', 'apple', 'macos'],
+            'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux', 'redhat'],
+            'ios': ['ios', 'ipad', 'apple', 'macos'],
             'android': ['android', 'google', 'samsung', 'pixel'],
             'vmware': ['vmware', 'esxi', 'vsphere'],
             'solaris': ['solaris', 'sun'],
@@ -205,8 +211,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             response.append(f"{Fore.YELLOW}Next Step:{Style.RESET_ALL} Enter a number (1-{len(top_techs)}, or 0 for all) to proceed.")
             return "\n".join(response) + "\nCLARIFICATION_NEEDED"
 
-    # === GENERATE FINAL RESPONSE ===
-    action = "Assessing" if is_assessment_query else "Implementing"
+    # === GENERATE FINAL RESPONSE (NOW SAFE) ===
     response.append(f"{Fore.CYAN}### {action} {', '.join(control_ids)}{Style.RESET_ALL}")
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
 
@@ -232,7 +237,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 if ctrl.get('parameters'):
                     response.append(f"     {len(steps)+1}. Confirm parameters: {', '.join(ctrl['parameters'])}")
 
-            if selected_techs:
+            if selected-recognition_techs:
                 for tech in selected_techs:
                     recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
                     if recs:
