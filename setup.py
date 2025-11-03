@@ -78,28 +78,41 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    print("  Step 2/3: Installing requirements...", end=" ", flush=True)
-    subprocess.run([python_cmd, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"], check=True)
-    print("complete")
+    print("  Step 2/3: Installing requirements...", flush=True)
+    
+    # === CUSTOM PIP INSTALL WITH PROGRESS ===
+    requirements = []
+    with open("requirements.txt", "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                requirements.append(line)
 
-    # === DOWNLOAD SPACY MODEL FROM CONFIG ===
+    for req in tqdm(requirements, desc="Packages", unit="pkg"):
+        result = subprocess.run(
+            [python_cmd, "-m", "pip", "install", req, "--quiet"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f"\nFailed to install {req}")
+            print(result.stderr)
+            sys.exit(1)
+
+    # === SPACY MODEL ===
     print("  Step 3/3: Downloading spaCy model...", end=" ", flush=True)
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
 
-    # Force install the correct model version
-    model_install_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--force"]
-    result = subprocess.run(model_install_cmd, capture_output=True, text=True)
+    model_cmd = [python_cmd, "-m", "spacy", "download", spacy_model, "--force"]
+    result = subprocess.run(model_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"\nFailed to download '{spacy_model}'. Output:")
-        print(result.stderr)
-        print("Trying fallback to en_core_web_trf...")
+        print(f"\nFailed to download '{spacy_model}'. Falling back...")
         subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
     else:
         print(f"Downloaded '{spacy_model}'")
     print("complete")
-
 
 def download_cci_xml(python_cmd):
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
