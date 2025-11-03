@@ -334,9 +334,9 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
 
     for control_id in control_ids:
-        # === CASE-INSENSITIVE FALLBACK ===
-        ctrl_key = next((k for k in control_details.keys() if k.lower() == control_id.lower()), control_id)
-        if ctrl_key not in control_details:
+        # === CASE-INSENSITIVE LOOKUP ===
+        ctrl_key = next((k for k in control_details.keys() if k.lower() == control_id.lower()), None)
+        if not ctrl_key:
             response.append(f"{Fore.YELLOW}1. {control_id}{Style.RESET_ALL}")
             response.append(f"   - Status: Not found in NIST 800-53 Rev 5 catalog.")
             continue
@@ -368,7 +368,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             else:
                 response.append(f"     1. Follow the control description to enforce this requirement.")
 
-        # === STIG TABLE ===
+        # === STIG TABLE (USE ctrl_key) ===
         if selected_techs:
             for tech in selected_techs:
                 recs = all_stig_recommendations.get(tech, {}).get(ctrl_key, [])
