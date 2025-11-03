@@ -106,6 +106,7 @@ def main():
     # === WELCOME MESSAGE ===
     print(f"{Fore.GREEN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
     print(f"Using spaCy model: {Fore.MAGENTA}{SPACY_MODEL}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}EntityRuler: CONTROL_ID, CCI_ID, STIG_RULE_ID detection enabled{Style.RESET_ALL}")
     print("Type 'help' for examples, 'list stigs' to see available STIGs, 'show unknown' to see unhandled queries, 'exit' to quit.\n")
 
     # === INTERACTIVE LOOP ===
