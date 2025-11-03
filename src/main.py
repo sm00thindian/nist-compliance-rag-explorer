@@ -13,7 +13,15 @@ from .parsers import (
 from .vector_store import build_vector_store, retrieve_documents
 from .response_generator import generate_response
 
+# Initialize colorama
 init()
+
+# === CONFIGURATION ===
+config = configparser.ConfigParser()
+config.read('config/config.ini')
+SPACY_MODEL = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_sm')
+
+# === PATHS ===
 KNOWLEDGE_DIR = 'knowledge'
 os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
 logging.basicConfig(
@@ -25,6 +33,7 @@ logging.basicConfig(
 
 UNKNOWN_QUERIES_FILE = os.path.join(KNOWLEDGE_DIR, 'unknown_queries.pkl')
 
+
 def save_unknown_query(query):
     """Save an unknown query for future training."""
     unknown_queries = load_unknown_queries()
@@ -34,6 +43,7 @@ def save_unknown_query(query):
             pickle.dump(unknown_queries, f)
         logging.info(f"Saved unknown query: {query}")
 
+
 def load_unknown_queries():
     """Load previously saved unknown queries."""
     if os.path.exists(UNKNOWN_QUERIES_FILE):
@@ -41,13 +51,13 @@ def load_unknown_queries():
             return pickle.load(f)
     return []
 
+
 def main():
     parser = argparse.ArgumentParser(description="NIST Compliance RAG Demo")
     parser.add_argument('--model', type=str, default='all-mpnet-base-v2', help='SentenceTransformer model name')
     args = parser.parse_args()
 
-    config = configparser.ConfigParser()
-    config.read('config/config.ini')
+    # === CONFIG VALUES ===
     stig_folder = config.get('DEFAULT', 'stig_folder', fallback='./stigs')
     logging.debug(f"Resolved stig_folder: {os.path.abspath(stig_folder)}")
     nist_800_53_xls_url = config.get('DEFAULT', 'nist_800_53_xls_url')
@@ -56,6 +66,7 @@ def main():
     nist_800_53a_json_url = config.get('DEFAULT', 'nist_800_53a_json_url')
     excel_local_path = os.path.join(KNOWLEDGE_DIR, 'sp800-53r5-control-catalog.xlsx')
 
+    # === DATA FETCHING ===
     print(f"{Fore.CYAN}Fetching NIST SP 800-53 Rev 5 catalog data...{Style.RESET_ALL}")
     catalog_json = fetch_json_data(catalog_url)
     catalog_data = extract_controls_from_json(catalog_json) if catalog_json else extract_controls_from_excel(fetch_excel_data(nist_800_53_xls_url, excel_local_path))
@@ -68,6 +79,7 @@ def main():
     assessment_json = fetch_json_data(nist_800_53a_json_url)
     assessment_procedures = extract_assessment_procedures(assessment_json) if assessment_json else {}
 
+    # === VECTOR STORE ===
     all_documents = [
         f"NIST 800-53 Rev 5 Catalog, {ctrl['control_id']}: {ctrl['title']} {ctrl['description']}"
         for ctrl in catalog_data
@@ -76,9 +88,10 @@ def main():
         for ctrl in catalog_data
     ] + high_baseline_data
 
-    print(f"{Fore.CYAN}Building new vector store...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Building vector store...{Style.RESET_ALL}")
     model, index, doc_list = build_vector_store(all_documents, args.model, KNOWLEDGE_DIR)
 
+    # === CCI & STIG LOADING ===
     print(f"{Fore.CYAN}Loading CCI-to-NIST mapping...{Style.RESET_ALL}")
     cci_to_nist = load_cci_mapping(os.path.join(KNOWLEDGE_DIR, 'U_CCI_List.xml'))
 
@@ -86,12 +99,16 @@ def main():
     all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
     logging.debug(f"Loaded {len(available_stigs)} STIGs: {[stig['file'] for stig in available_stigs]}")
 
+    # === INDEXES ===
     control_details = {ctrl['control_id']: ctrl for ctrl in catalog_data}
     high_baseline_controls = {normalize_control_id(entry.split(', ')[1].split(': ')[0]) for entry in high_baseline_data}
 
-    print(f"{Fore.GREEN}Welcome to the Compliance RAG Demo with NIST 800-53 Rev 5 Catalog, 800-53A, and STIG Knowledge{Style.RESET_ALL}")
+    # === WELCOME MESSAGE ===
+    print(f"{Fore.GREEN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
+    print(f"Using spaCy model: {Fore.MAGENTA}{SPACY_MODEL}{Style.RESET_ALL}")
     print("Type 'help' for examples, 'list stigs' to see available STIGs, 'show unknown' to see unhandled queries, 'exit' to quit.\n")
 
+    # === INTERACTIVE LOOP ===
     while True:
         print(f"{Fore.YELLOW}Enter your compliance question (e.g., 'How do I assess AU-3?', 'exit'):{Style.RESET_ALL}")
         query = input().strip()
@@ -101,11 +118,11 @@ def main():
             print("Examples:")
             print("- How should IA-5 be implemented for Windows?")
             print("- How do I assess AU-3?")
-            print("- What is CCI-000130? (CCI lookup)")
-            print("- List CCI mappings for AU-3 (Reverse CCI lookup)")
-            print("- Show CCI mappings (CCI summary)")
+            print("- What is CCI-000130?")
+            print("- List CCI mappings for AU-3")
+            print("- Show CCI mappings")
             print("- List STIGs")
-            print("- Show unknown (displays previously unhandled queries)")
+            print("- Show unknown")
             continue
         if query.lower() == 'show unknown':
             unknown_queries = load_unknown_queries()
@@ -120,44 +137,53 @@ def main():
             print("Please enter a query or type 'help' for examples.")
             continue
 
+        # === CHECKLIST PROMPT ===
         generate_checklist = False
         if "assess" in query.lower() or "audit" in query.lower():
             while True:
-                checklist_response = input(f"{Fore.YELLOW}Generate an assessment checklist for this query? (y/n): {Style.RESET_ALL}").strip().lower()
-                if checklist_response in ('y', 'n'):
-                    generate_checklist = checklist_response == 'y'
+                response = input(f"{Fore.YELLOW}Generate an assessment checklist? (y/n): {Style.RESET_ALL}").strip().lower()
+                if response in ('y', 'n'):
+                    generate_checklist = response == 'y'
                     break
-                print("Please enter 'y' for yes or 'n' for no.")
+                print("Please enter 'y' or 'n'.")
 
+        # === RETRIEVAL & RESPONSE ===
         print(f"\n{Fore.CYAN}Processing...{Style.RESET_ALL}")
         retrieved_docs = retrieve_documents(query, model, index, doc_list)
         
-        response = generate_response(query, retrieved_docs, control_details, high_baseline_controls, all_stig_recommendations, available_stigs, assessment_procedures, cci_to_nist, generate_checklist=generate_checklist)
-        
-        # Handle clarification prompts
+        response = generate_response(
+            query, retrieved_docs, control_details, high_baseline_controls,
+            all_stig_recommendations, available_stigs, assessment_procedures,
+            cci_to_nist, generate_checklist=generate_checklist
+        )
+
+        # === CLARIFICATION HANDLING ===
         if "Multiple STIG technologies available" in response or "CLARIFICATION_NEEDED" in response:
             clarification_text = response.replace("\nCLARIFICATION_NEEDED", "")
             print(clarification_text)
-            # Count lines starting with "1.", "2.", etc., to determine the number of options
             lines = clarification_text.split('\n')
             num_options = sum(1 for line in lines if line.strip() and line.strip()[0].isdigit() and line.strip()[1] == '.')
-            logging.debug(f"Detected {num_options} technology options in clarification text: {[line.strip() for line in lines if line.strip() and line.strip()[0].isdigit() and line.strip()[1] == '.' ]}")
-            if num_options == 0:  # Fallback if count fails
+            if num_options == 0:
                 num_options = len([line for line in lines if " - Title:" in line])
-                logging.debug(f"Fallback count: {num_options} based on title lines")
             while True:
                 tech_choice = input(f"{Fore.YELLOW}Enter a number (1-{num_options}, or 0 for all): {Style.RESET_ALL}").strip()
                 if tech_choice.isdigit() and 0 <= int(tech_choice) <= num_options:
                     break
                 print(f"Please enter a number between 0 and {num_options}.")
             query += f" with technology index {tech_choice}"
-            response = generate_response(query, retrieved_docs, control_details, high_baseline_controls, all_stig_recommendations, available_stigs, assessment_procedures, cci_to_nist, generate_checklist=generate_checklist)
+            response = generate_response(
+                query, retrieved_docs, control_details, high_baseline_controls,
+                all_stig_recommendations, available_stigs, assessment_procedures,
+                cci_to_nist, generate_checklist=generate_checklist
+            )
         
+        # === RECORD UNKNOWN QUERIES ===
         if "not found" in response.lower() or "no specific" in response.lower() or len(retrieved_docs) == 0:
             save_unknown_query(query)
             response += f"\n{Fore.YELLOW}Note: This query has been recorded for future improvement. Type 'show unknown' to see all recorded queries.{Style.RESET_ALL}"
         
         print(f"\n{Fore.CYAN}### Response to '{query}'{Style.RESET_ALL}\n{response}\n")
+
 
 if __name__ == "__main__":
     main()
