@@ -108,7 +108,7 @@ def _get_terminal_width() -> int:
     try:
         return os.get_terminal_size().columns
     except OSError:
-        return 120  # fallback
+        return 120
 
 
 def _wrap(text: str, width: int, indent: str = "") -> str:
@@ -138,10 +138,11 @@ def _format_stig_table(recs: list, term_width: int) -> str:
     if not recs:
         return "No specific STIG guidance."
 
-    # === COLUMN WIDTHS ===
-    rule_w = 22
-    title_w = (term_width - 30) - rule_w - 12  # 12 = padding + borders
-    sev_w = 8
+    # === COLUMN WIDTHS (terminal_width - 30) ===
+    table_width = term_width - 30
+    rule_w = min(22, int(table_width * 0.25))
+    title_w = int(table_width * 0.55)
+    sev_w = min(8, int(table_width * 0.10))
 
     header = f"{Fore.CYAN}│ {'Rule ID':<{rule_w}} │ {'Title':<{title_w}} │ {'Severity':<{sev_w}} │{Style.RESET_ALL}"
     separator = f"{Fore.CYAN}├{'─' * (rule_w + 2)}┼{'─' * (title_w + 2)}┼{'─' * (sev_w + 2)}┤{Style.RESET_ALL}"
@@ -165,13 +166,13 @@ def _format_stig_table(recs: list, term_width: int) -> str:
         for extra in title_lines[1:]:
             lines.append(f"{Fore.CYAN}│ {'':<{rule_w}} │ {extra:<{title_w}} │ {'':<{sev_w}} │{Style.RESET_ALL}")
 
-        # === ASSESSMENT ===
+        # === ASSESSMENT (BRIGHT MAGENTA) ===
         if assessment:
             wrapped = _wrap(assessment, term_width - 10, "│ Assessment: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # === FIX ===
+        # === FIX (BRIGHT GREEN) ===
         if fix:
             wrapped = _wrap(fix, term_width - 10, "│ Fix: ")
             for line in wrapped.splitlines():
