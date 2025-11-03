@@ -4,7 +4,6 @@ import sys
 import shutil
 import configparser
 import hashlib
-from tqdm import tqdm
 
 
 # === PATHS ===
@@ -70,7 +69,7 @@ def get_python_cmd():
     return os.path.join(VENV_DIR, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin", "python3")
 
 
-# === INSTALL REQUIREMENTS WITH PROGRESS BAR ===
+# === INSTALL REQUIREMENTS WITH PROGRESS BAR (tqdm imported here) ===
 def install_requirements():
     python_cmd = get_python_cmd()
     if not os.path.exists("requirements.txt"):
@@ -82,6 +81,15 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
+    # === Import tqdm ONLY after venv is ready ===
+    try:
+        from tqdm import tqdm as tqdm_lib
+        TQDM_AVAILABLE = True
+    except ImportError:
+        TQDM_AVAILABLE = False
+        def tqdm_lib(iterable, **kwargs):
+            return iterable  # Fallback
+
     print("  Step 2/3: Installing requirements...", flush=True)
     
     requirements = []
@@ -91,7 +99,7 @@ def install_requirements():
             if line and not line.startswith("#"):
                 requirements.append(line)
 
-    for req in tqdm(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}"):
+    for req in (tqdm_lib(requirements, desc="Packages", unit="pkg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") if TQDM_AVAILABLE else requirements):
         result = subprocess.run(
             [python_cmd, "-m", "pip", "install", req, "--quiet"],
             capture_output=True,
@@ -129,7 +137,7 @@ def download_data():
 
 def download_cci_xml(python_cmd):
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
-    cci_file = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
+    cci_file = os.path.join(KNOWLEDGE_DIR, "U_C_CCI_List.xml")
     config = configparser.ConfigParser()
     config.read('config/config.ini')
     cci_url = config.get('DEFAULT', 'cci_url',
@@ -213,7 +221,7 @@ def run_tests():
     sys.exit(result.returncode)
 
 
-# === DOCKER MODE: DOWNLOAD ONLY ===
+# === DOCKER MODE ===
 def docker_download_mode():
     print("Docker mode: Downloading knowledge data only...")
     create_virtual_env()
