@@ -8,6 +8,7 @@ from colorama import Fore, Style
 from .text_processing import nlp
 from .parsers import normalize_control_id, extract_actionable_steps
 
+
 # ----------------------------------------------------------------------
 #  CONSTANTS
 # ----------------------------------------------------------------------
@@ -112,7 +113,6 @@ def _get_terminal_width() -> int:
 
 
 def _wrap(text: str, width: int, indent: str = "") -> str:
-    """Wrap long text with indent on continuation lines."""
     if not text:
         return ""
     wrapper = textwrap.TextWrapper(width=width - len(indent), subsequent_indent=" " * len(indent))
@@ -138,11 +138,9 @@ def _format_stig_table(recs: list, term_width: int) -> str:
     if not recs:
         return "No specific STIG guidance."
 
-    # === COLUMN WIDTHS (terminal_width - 30) ===
-    table_width = term_width - 30
-    rule_w = min(22, int(table_width * 0.25))
-    title_w = int(table_width * 0.55)
-    sev_w = min(8, int(table_width * 0.10))
+    rule_w = 22
+    title_w = (term_width - 30) - rule_w - 12
+    sev_w = 8
 
     header = f"{Fore.CYAN}│ {'Rule ID':<{rule_w}} │ {'Title':<{title_w}} │ {'Severity':<{sev_w}} │{Style.RESET_ALL}"
     separator = f"{Fore.CYAN}├{'─' * (rule_w + 2)}┼{'─' * (title_w + 2)}┼{'─' * (sev_w + 2)}┤{Style.RESET_ALL}"
@@ -157,7 +155,6 @@ def _format_stig_table(recs: list, term_width: int) -> str:
 
         assessment, fix, details = _parse_stig_fix(rec['fix'])
 
-        # === HEADER LINE (wrapped title) ===
         wrapped_title = _wrap(title, title_w)
         title_lines = wrapped_title.splitlines()
         lines.append(
@@ -166,28 +163,23 @@ def _format_stig_table(recs: list, term_width: int) -> str:
         for extra in title_lines[1:]:
             lines.append(f"{Fore.CYAN}│ {'':<{rule_w}} │ {extra:<{title_w}} │ {'':<{sev_w}} │{Style.RESET_ALL}")
 
-        # === ASSESSMENT (BRIGHT MAGENTA) ===
         if assessment:
             wrapped = _wrap(assessment, term_width - 10, "│ Assessment: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # === FIX (BRIGHT GREEN) ===
         if fix:
             wrapped = _wrap(fix, term_width - 10, "│ Fix: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # === DETAILS (BRIGHT WHITE) ===
         if details:
             wrapped = _wrap(details, term_width - 10, "│ Details: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.WHITE}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
-        # === ROW SEPARATOR ===
         lines.append(separator)
 
-    # Remove last separator
     if lines and lines[-1] == separator:
         lines.pop()
 
@@ -313,7 +305,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         unique_techs = list(tech_to_stig.keys())
 
-        # === ALWAYS DEFINE selected_techs (FIX) ===
+        # === ALWAYS DEFINE selected_techs ===
         selected_techs = []
 
         # === AUTO-SELECT OR PROMPT ===
@@ -342,20 +334,22 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     response.append(f"Based on NIST 800-53 Rev 5 and STIGs for: {', '.join(selected_techs) if selected_techs else 'N/A'}\n")
 
     for control_id in control_ids:
-        if control_id not in control_details:
+        # === CASE-INSENSITIVE FALLBACK ===
+        ctrl_key = next((k for k in control_details.keys() if k.lower() == control_id.lower()), control_id)
+        if ctrl_key not in control_details:
             response.append(f"{Fore.YELLOW}1. {control_id}{Style.RESET_ALL}")
             response.append(f"   - Status: Not found in NIST 800-53 Rev 5 catalog.")
             continue
 
-        ctrl = control_details[control_id]
+        ctrl = control_details[ctrl_key]
         response.append(f"{Fore.YELLOW}1. {control_id} - {ctrl['title']}{Style.RESET_ALL}")
         purpose = ctrl['description'].split('.')[0].lower()
         response.append(f"   - Purpose: {_wrap(purpose, term_width - 10, '     ')}")
 
         if is_assessment_query:
             response.append(f"{Fore.CYAN}   Assessment Steps:{Style.RESET_ALL}")
-            if control_id in assessment_procedures:
-                for i, m in enumerate(assessment_procedures[control_id], 1):
+            if ctrl_key in assessment_procedures:
+                for i, m in enumerate(assessment_procedures[ctrl_key], 1):
                     wrapped = _wrap(m, term_width - 10, f"     {i}. ")
                     response.extend(wrapped.splitlines())
             else:
@@ -377,7 +371,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         # === STIG TABLE ===
         if selected_techs:
             for tech in selected_techs:
-                recs = all_stig_recommendations.get(tech, {}).get(control_id, [])
+                recs = all_stig_recommendations.get(tech, {}).get(ctrl_key, [])
                 if recs:
                     response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL}")
                     response.append(_format_stig_table(recs, term_width))
@@ -389,7 +383,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         if generate_checklist:
             steps = extract_actionable_steps(ctrl['description'])
             stig_recs = {
-                tech: {control_id: all_stig_recommendations.get(tech, {}).get(control_id, [])}
+                tech: {ctrl_key: all_stig_recommendations.get(tech, {}).get(ctrl_key, [])}
                 for tech in selected_techs
             }
             if steps or any(stig_recs.values()):
