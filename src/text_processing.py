@@ -1,21 +1,23 @@
 import spacy
+import configparser
+import os
 
-nlp = spacy.load('en_core_web_sm')
+# Load config
+config = configparser.ConfigParser()
+config.read('config/config.ini')
+SPACY_MODEL = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_sm')
+
+# Load spaCy model (with error handling)
+try:
+    nlp = spacy.load(SPACY_MODEL)
+    print(f"Loaded spaCy model: {SPACY_MODEL}")
+except OSError:
+    print(f"Warning: Model '{SPACY_MODEL}' not found. Falling back to 'en_core_web_sm'.")
+    nlp = spacy.load('en_core_web_sm')
 
 def extract_actionable_steps(description):
     """
     Extract actionable steps from a control description using spaCy.
-
-    Args:
-        description (str): The control description to analyze.
-
-    Returns:
-        list: A list of actionable steps (e.g., 'verify access control', 'check encryption').
-
-    Example:
-        >>> steps = extract_actionable_steps('Ensure that access control is enforced.')
-        >>> print(steps)
-        ['ensure access control']
     """
     doc = nlp(description.lower())
     steps = []
