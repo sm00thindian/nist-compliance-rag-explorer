@@ -81,7 +81,6 @@ def install_requirements():
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
-    # Import tqdm AFTER venv
     try:
         from tqdm import tqdm as tqdm_lib
         TQDM_AVAILABLE = True
@@ -213,14 +212,13 @@ print('Downloaded')
 def run_demo(selected_model):
     python_cmd = get_python_cmd()
     print(f"\nLaunching demo with model: {selected_model}")
-    # ADD SRC TO PYTHONPATH
+    # CORRECT PYTHONPATH: parent of src/
     env = os.environ.copy()
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src_path = os.path.join(project_root, "src")
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # → /Users/kilynn/Projects/nist-compliance-rag-explorer
     if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = src_path + os.pathsep + env["PYTHONPATH"]
+        env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
     else:
-        env["PYTHONPATH"] = src_path
+        env["PYTHONPATH"] = project_root
     subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], env=env, check=True)
 
 
