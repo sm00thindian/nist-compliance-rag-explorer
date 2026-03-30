@@ -1,7 +1,9 @@
 import os
 import sys
 import re
+import json
 import logging
+import requests
 from colorama import Fore, Style, init
 from sentence_transformers import SentenceTransformer
 import spacy
@@ -27,7 +29,7 @@ NIST_CATALOG = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_catalog_json.json")
 HIGH_BASELINE = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_high-baseline_json.json")
 ASSESSMENT_PROC = os.path.join(KNOWLEDGE_DIR, "nist_800_53A-rev5_assessment-procedures_json.json")
 CCI_XML = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
-STIG_FOLDER = os.path.join(KNOWLEDGE_DIR, "stigs")
+STIG_FOLDER = "stigs"
 
 # === MAIN ===
 def main():
@@ -42,21 +44,57 @@ def main():
     # Load spaCy (already done in text_processing.py)
     print(f"Loaded spaCy model: {nlp.meta['name']}")
 
+    # Download missing data files
+    os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
+    if not os.path.exists(NIST_CATALOG):
+        print(f"Downloading {NIST_CATALOG}...")
+        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json")
+        response.raise_for_status()
+        with open(NIST_CATALOG, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+    if not os.path.exists(HIGH_BASELINE):
+        print(f"Downloading {HIGH_BASELINE}...")
+        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json")
+        response.raise_for_status()
+        with open(HIGH_BASELINE, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+    if not os.path.exists(ASSESSMENT_PROC):
+        print(f"Downloading {ASSESSMENT_PROC}...")
+        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json")
+        response.raise_for_status()
+        with open(ASSESSMENT_PROC, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+    if not os.path.exists(CCI_XML):
+        print(f"Downloading {CCI_XML}...")
+        response = requests.get("https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml")
+        response.raise_for_status()
+        with open(CCI_XML, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+
     # Load NIST data
-    print("Fetching NIST SP 800-53 Rev 5 catalog data...")
-    with open(NIST_CATALOG, 'r', encoding='utf-8') as f:
-        catalog_json = json.load(f)
-    control_details = {c['control_id']: c for c in extract_controls_from_json(catalog_json)}
+    try:
+        print("Fetching NIST SP 800-53 Rev 5 catalog data...")
+        with open(NIST_CATALOG, 'r', encoding='utf-8') as f:
+            catalog_json = json.load(f)
+        control_details = {c['control_id']: c for c in extract_controls_from_json(catalog_json)}
 
-    print("Fetching NIST SP 800-53 Rev 5 High baseline JSON data...")
-    with open(HIGH_BASELINE, 'r', encoding='utf-8') as f:
-        high_baseline_json = json.load(f)
-    high_baseline_controls = extract_high_baseline_controls(high_baseline_json)
+        print("Fetching NIST SP 800-53 Rev 5 High baseline JSON data...")
+        with open(HIGH_BASELINE, 'r', encoding='utf-8') as f:
+            high_baseline_json = json.load(f)
+        high_baseline_controls = extract_high_baseline_controls(high_baseline_json)
 
-    print("Fetching NIST SP 800-53A assessment procedures JSON data...")
-    with open(ASSESSMENT_PROC, 'r', encoding='utf-8') as f:
-        assessment_json = json.load(f)
-    assessment_procedures = extract_assessment_procedures(assessment_json)
+        print("Fetching NIST SP 800-53A assessment procedures JSON data...")
+        with open(ASSESSMENT_PROC, 'r', encoding='utf-8') as f:
+            assessment_json = json.load(f)
+        assessment_procedures = extract_assessment_procedures(assessment_json)
+    except FileNotFoundError as e:
+        print(f"{Fore.RED}Error: Required data files not found. Please ensure the following files are present in the 'knowledge' directory:")
+        print(f"  - {NIST_CATALOG}")
+        print(f"  - {HIGH_BASELINE}")
+        print(f"  - {ASSESSMENT_PROC}")
+        print(f"  - {CCI_XML}")
+        print("Download them from the appropriate NIST sources and place them in the 'knowledge' directory.{Style.RESET_ALL}")
+        sys.exit(1)
 
     # Build vector store
     print("Building vector store...")

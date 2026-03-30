@@ -58,21 +58,17 @@ def add_entity_ruler(nlp):
 
     patterns = [
         # === CONTROL_ID ===
-        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+"}}]},  # AC-7
-        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+\(\d+\)"}}]},  # AC-7(2)
-        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2\-\d+\s*\(\d+\)"}}]},  # AC-7 (2)
-        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+\s*[a-z]?"}}]},  # AC-7 a
-        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+(\(\d+\))?(\([a-z]\))?"}}]},  # AC-7(1)(a)
+        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+(\(\d+\))?"}}]},  # AC-7, AC-7(2)
+        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+"}}, {"TEXT": {"REGEX": r"[a-z]"}}]},  # AC-7 a
+        {"label": "CONTROL_ID", "pattern": [{"TEXT": {"REGEX": r"[A-Z]{2}-\d+\(\d+\)\([a-z]\)"}}]},  # AC-7(1)(a)
 
         # === CCI_ID ===
-        {"label": "CCI_ID", "pattern": [{"TEXT": {"REGEX": r"CCI-\d{6}"}}]},  # CCI-000130
-        {"label": "CCI_ID", "pattern": [{"TEXT": {"REGEX": r"CCI\s*-\s*\d{6}"}}]},  # CCI - 001234
-        {"label": "CCI_ID", "pattern": [{"TEXT": {"REGEX": r"CCI\d{6}"}}]},  # CCI000130
+        {"label": "CCI_ID", "pattern": [{"TEXT": {"REGEX": r"CCI-?\d{6}"}}]},  # CCI-000130, CCI000130
+        {"label": "CCI_ID", "pattern": [{"TEXT": {"REGEX": r"CCI"}}, {"TEXT": {"REGEX": r"-"}}, {"TEXT": {"REGEX": r"\d{6}"}}]},  # CCI - 001234
 
         # === STIG_RULE_ID ===
         {"label": "STIG_RULE_ID", "pattern": [{"TEXT": {"REGEX": r"SV-\d{5,6}r\d+_rule"}}]},  # SV-230456r1_rule
-        {"label": "STIG_RULE_ID", "pattern": [{"TEXT": {"REGEX": r"SV\s*-\s*\d{5,6}\s*r\d+\s*rule"}}]},  # SV - 12345 r2 rule
-        {"label": "STIG_RULE_ID", "pattern": [{"TEXT": {"REGEX": r"SV-\d{5,6}r\d+"}}]},  # SV-12345r1
+        {"label": "STIG_RULE_ID", "pattern": [{"TEXT": {"REGEX": r"SV"}}, {"TEXT": {"REGEX": r"-"}}, {"TEXT": {"REGEX": r"\d{5,6}"}}, {"TEXT": {"REGEX": r"r\d+"}}, {"TEXT": {"REGEX": r"rule"}}]},  # SV - 67890 r3 rule
     ]
 
     ruler.add_patterns(patterns)
