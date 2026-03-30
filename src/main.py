@@ -5,21 +5,22 @@ import json
 import logging
 import requests
 from colorama import Fore, Style, init
-from sentence_transformers import SentenceTransformer
 import spacy
 from tqdm import tqdm
 
 # Local imports
-from .retriever import build_vector_store, retrieve_relevant_docs
-from .parsers import (
+from retriever import build_vector_store, retrieve_relevant_docs
+from parsers import (
     extract_controls_from_json,
     extract_high_baseline_controls,
     extract_assessment_procedures,
     load_cci_mapping,
     load_stig_data
 )
-from .response_generator import generate_response
-from .text_processing import nlp  # spaCy model
+from response_generator import generate_response
+from text_processing import nlp  # spaCy model
+from config_loader import get_config
+from embedding_manager import EmbeddingManager
 
 init(autoreset=True)
 
@@ -33,40 +34,56 @@ STIG_FOLDER = "stigs"
 
 # === MAIN ===
 def main():
+    # Load configuration
+    config = get_config()
+    embedding_config = config.get_embedding_config()
+    app_config = config.get_app_config()
+    data_urls = config.get_data_urls()
+
     print(f"{Fore.CYAN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
+    print(f"Using embedding model: {embedding_config['model_name']}")
+    print(f"Similarity metric: {embedding_config['similarity_metric']}")
     print("Enter your compliance question (e.g., 'How do I assess AU-3?', 'exit'):")
 
-    # Load embedding model
+    # Initialize embedding manager
     print("Loading embedding model...")
-    embedder = SentenceTransformer("all-MiniLM-L12-v2")
-    print(f"Model loaded: {embedder}")
+    embedding_manager = EmbeddingManager(embedding_config)
+    model_info = embedding_manager.get_model_info()
+    print(f"Model loaded: {model_info['model_name']} ({model_info['dimensions']}D, {model_info['device']})")
 
     # Load spaCy (already done in text_processing.py)
     print(f"Loaded spaCy model: {nlp.meta['name']}")
 
     # Download missing data files
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
+
+    # Use configured URLs or defaults
+    catalog_url = data_urls.get('catalog_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json")
+    high_baseline_url = data_urls.get('high_baseline_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json")
+    assessment_url = data_urls.get('assessment_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json")
+    cci_url = data_urls.get('cci_url', "https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml")
+
     if not os.path.exists(NIST_CATALOG):
         print(f"Downloading {NIST_CATALOG}...")
-        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json")
+        response = requests.get(catalog_url)
         response.raise_for_status()
         with open(NIST_CATALOG, 'w', encoding='utf-8') as f:
             f.write(response.text)
     if not os.path.exists(HIGH_BASELINE):
         print(f"Downloading {HIGH_BASELINE}...")
-        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json")
+        response = requests.get(high_baseline_url)
         response.raise_for_status()
         with open(HIGH_BASELINE, 'w', encoding='utf-8') as f:
             f.write(response.text)
     if not os.path.exists(ASSESSMENT_PROC):
         print(f"Downloading {ASSESSMENT_PROC}...")
-        response = requests.get("https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json")
+        response = requests.get(assessment_url)
         response.raise_for_status()
         with open(ASSESSMENT_PROC, 'w', encoding='utf-8') as f:
             f.write(response.text)
     if not os.path.exists(CCI_XML):
         print(f"Downloading {CCI_XML}...")
-        response = requests.get("https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml")
+        response = requests.get(cci_url)
         response.raise_for_status()
         with open(CCI_XML, 'w', encoding='utf-8') as f:
             f.write(response.text)
@@ -102,7 +119,7 @@ def main():
     for ctrl in control_details.values():
         all_docs.append(f"Catalog, {ctrl['control_id']}: {ctrl['title']}")
         all_docs.append(f"Description, {ctrl['control_id']}: {ctrl['description'][:500]}")
-    index = build_vector_store(all_docs, embedder)
+    index = build_vector_store(all_docs, embedding_manager)
 
     # Load CCI mapping
     print("Loading CCI-to-NIST mapping...")
@@ -140,7 +157,7 @@ def main():
             generate_checklist = checklist_input == 'y'
 
         print(f"\n{Fore.CYAN}Processing...{Style.RESET_ALL}")
-        retrieved_docs = retrieve_relevant_docs(query, index, embedder)
+        retrieved_docs = retrieve_relevant_docs(query, index, embedding_manager)
 
         # === INITIAL RESPONSE ===
         response = generate_response(
@@ -163,7 +180,7 @@ def main():
             original_query = re.sub(r" with technology index \d+$", "", query).strip()
             query = f"{original_query} with technology index {tech_choice}"
             # Reset retrieved_docs for new query
-            retrieved_docs = retrieve_relevant_docs(query, index, embedder)
+            retrieved_docs = retrieve_relevant_docs(query, index, embedding_manager)
             response = generate_response(
                 query, retrieved_docs, control_details, high_baseline_controls,
                 all_stig_recommendations, available_stigs, assessment_procedures,

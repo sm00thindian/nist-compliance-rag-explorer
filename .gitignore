@@ -12,3 +12,5 @@ __pycache__/
 *.log
 *.xlsx
 *.pkl
+models/
+model_benchmark_results.json

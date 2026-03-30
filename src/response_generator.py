@@ -5,8 +5,8 @@ import logging
 import textwrap
 from datetime import datetime
 from colorama import Fore, Style
-from .text_processing import nlp
-from .parsers import normalize_control_id, extract_actionable_steps
+from text_processing import nlp
+from parsers import normalize_control_id, extract_actionable_steps
 
 
 # ----------------------------------------------------------------------

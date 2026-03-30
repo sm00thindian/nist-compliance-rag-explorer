@@ -1,7 +1,23 @@
 [DEFAULT]
+# Data source URLs
 nist_800_53a_json_url = https://raw.githubusercontent.com/usnistgov/oscal-content/master/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_assessment.json
 catalog_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
 high_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_profile.json
 nist_800_53_xls_url = https://csrc.nist.gov/files/pubs/sp/800/53/r5/upd1/final/docs/sp800-53r5-control-catalog.xlsx
-stig_folder = ./stigs  # Default relative path
+cci_url = https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip
+nist_800_53_attack_mapping_url = https://center-for-threat-informed-defense.github.io/mappings-explorer/data/nist_800_53/attack-14.1/nist_800_53-rev5/enterprise/nist_800_53-rev5_attack-14.1-enterprise_json.json
+
+# Model configurations
 spacy_model = en_core_web_trf
+embedding_model = all-mpnet-base-v2
+embedding_dimensions = 768
+similarity_metric = cosine
+model_cache_dir = ./models
+enable_gpu = false
+model_fallbacks = all-MiniLM-L12-v2,text-embedding-3-small
+
+# Application settings
+stig_folder = ./stigs
+max_retrieval_results = 100
+enable_hybrid_search = false
+log_level = INFO

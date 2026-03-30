@@ -2,47 +2,65 @@ import os
 import hashlib
 import pickle
 import logging
-from sentence_transformers import SentenceTransformer
+from typing import List, Tuple, Any
 import faiss
+import numpy as np
 import re
-from .parsers import normalize_control_id
+from parsers import normalize_control_id
+from embedding_manager import EmbeddingManager
 
-def build_vector_store(documents, model_name, knowledge_dir):
+def build_vector_store(documents: List[str], embedding_manager: EmbeddingManager, knowledge_dir: str) -> Tuple[Any, Any, List[str]]:
     """
-    Build or load a FAISS vector store from a list of documents.
+    Build or load a FAISS vector store from a list of documents using the embedding manager.
 
     Args:
-        documents (list): List of strings representing the documents.
-        model_name (str): Name of the SentenceTransformer model to use.
+        documents (List[str]): List of strings representing the documents.
+        embedding_manager (EmbeddingManager): Configured embedding manager.
         knowledge_dir (str): Directory to save or load the FAISS index.
 
     Returns:
-        tuple: (model, index, doc_list)
-            - model: The SentenceTransformer model.
+        tuple: (embedding_manager, index, doc_list)
+            - embedding_manager: The embedding manager instance.
             - index: The FAISS index.
             - doc_list: The list of documents.
 
     Example:
-        >>> model, index, doc_list = build_vector_store(['doc1', 'doc2'], 'all-mpnet-base-v2', 'knowledge')
+        >>> manager, index, doc_list = build_vector_store(['doc1', 'doc2'], embedding_manager, 'knowledge')
     """
-    index_file = os.path.join(knowledge_dir, f"faiss_index_{hashlib.md5(model_name.encode()).hexdigest()}.pkl")
-    model = SentenceTransformer(model_name)
-    logging.info(f"Load pretrained SentenceTransformer: {model_name}")
-    
+    # Create unique index filename based on model and similarity metric
+    model_name = embedding_manager.model_name
+    similarity = embedding_manager.similarity_metric
+    index_hash = hashlib.md5(f"{model_name}_{similarity}".encode()).hexdigest()
+    index_file = os.path.join(knowledge_dir, f"faiss_index_{index_hash}.pkl")
+
+    logging.info(f"Building vector store with model: {model_name}, similarity: {similarity}")
+
     if os.path.exists(index_file):
         with open(index_file, 'rb') as f:
             index, doc_list = pickle.load(f)
         logging.info(f"Loaded existing FAISS index from {index_file}")
     else:
-        embeddings = model.encode(documents, show_progress_bar=True)
-        dimension = embeddings.shape[1]
-        index = faiss.IndexFlatL2(dimension)
-        index.add(embeddings)
+        logging.info(f"Building new FAISS index for {len(documents)} documents...")
+        embeddings = embedding_manager.encode(documents, show_progress=True)
+
+        # Create appropriate index based on similarity metric
+        index = embedding_manager.get_similarity_search_index(embeddings)
+
+        # Add embeddings to index
+        if embedding_manager.similarity_metric == 'cosine':
+            # Embeddings already normalized in get_similarity_search_index
+            index.add(embeddings)
+        else:
+            index.add(embeddings)
+
         doc_list = documents
+
+        # Save index
         with open(index_file, 'wb') as f:
             pickle.dump((index, doc_list), f)
         logging.info(f"Built new FAISS index and saved to {index_file}")
-    return model, index, doc_list
+
+    return embedding_manager, index, doc_list
 
 def retrieve_documents(query, model, index, doc_list, top_k=100):
     """

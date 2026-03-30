@@ -74,6 +74,49 @@ Here’s what I found based on NIST 800-53 and available STIGs:
 - No STIG assessment guidance found.
 
 **More Info:** [NIST 800-53 Assessment Procedures](https://csrc.nist.gov/projects/risk-management/sp800-53-controls/assessment-procedures)
+
+## Testing
+
+The project includes automated tests to verify functionality. All tests should be run within the virtual environment to ensure proper dependency isolation.
+
+### Running Tests
+
+1. **Ensure virtual environment is set up:**
+   ```bash
+   python setup.py
+   ```
+
+2. **Run all tests:**
+   ```bash
+   python test_runner.py
+   ```
+
+   This will automatically use the project's virtual environment and run:
+   - Embedding system tests
+   - Control ID detection tests
+   - CCI ID detection tests
+   - STIG ID detection tests
+   - RAG response tests
+
+3. **Run individual tests:**
+   ```bash
+   # Activate venv first
+   source venv/bin/activate  # On macOS/Linux
+   # or
+   venv\Scripts\activate     # On Windows
+
+   # Then run tests
+   python test/test_control_id.py
+   python test/test_cci_id.py
+   python test_embedding.py
+   ```
+
+### Test Coverage
+
+- **Embedding System**: Verifies model loading, text encoding, and vector store integration
+- **Entity Recognition**: Tests detection of control IDs, CCI IDs, and STIG IDs in text
+- **RAG Responses**: Validates the retrieval-augmented generation pipeline
+
 # Dependencies
 Listed in requirements.txt:
 ```

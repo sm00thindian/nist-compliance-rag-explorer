@@ -242,26 +242,40 @@ def docker_download_mode():
 
 # === MAIN ===
 def main():
-    models = [
-        ("all-MiniLM-L12-v2", "Fast"),
-        ("all-mpnet-base-v2", "Balanced"),
-        ("multi-qa-MiniLM-L6-cos-v1", "QA"),
-        ("all-distilroberta-v1", "Good"),
-        ("paraphrase-MiniLM-L6-v2", "Paraphrase"),
-        ("all-roberta-large-v1", "High accuracy"),
-    ]
+    # Load configuration to get available models
+    try:
+        from src.config_loader import get_config
+        config = get_config()
+        embedding_config = config.get_embedding_config()
 
-    print("Select embedding model:")
-    for i, (name, desc) in enumerate(models, 1):
-        print(f"  {i}: {name} - {desc}")
-    while True:
-        try:
-            choice = int(input("\nEnter 1–6: "))
-            if 1 <= choice <= 6:
-                break
-        except:
-            pass
-    selected_model = models[choice - 1][0]
+        # Use configured model or default
+        selected_model = embedding_config.get('model_name', 'all-mpnet-base-v2')
+        print(f"Using configured embedding model: {selected_model}")
+
+    except ImportError:
+        # Fallback to interactive selection if config not available
+        models = [
+            ("all-MiniLM-L12-v2", "Fast, 384D"),
+            ("all-mpnet-base-v2", "Balanced, 768D (Recommended)"),
+            ("multi-qa-MiniLM-L6-cos-v1", "QA-focused, 384D"),
+            ("all-distilroberta-v1", "Good performance, 768D"),
+            ("paraphrase-MiniLM-L6-v2", "Paraphrase tasks, 384D"),
+            ("all-roberta-large-v1", "High accuracy, 1024D"),
+            ("text-embedding-3-small", "OpenAI, 1536D (API key required)"),
+            ("bge-large-en-v1.5", "BGE, 1024D (High performance)"),
+        ]
+
+        print("Select embedding model:")
+        for i, (name, desc) in enumerate(models, 1):
+            print(f"  {i}: {name} - {desc}")
+        while True:
+            try:
+                choice = int(input("\nEnter 1–8: "))
+                if 1 <= choice <= 8:
+                    break
+            except:
+                pass
+        selected_model = models[choice - 1][0]
 
     create_virtual_env()
     install_requirements()
