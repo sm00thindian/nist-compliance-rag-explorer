@@ -8,6 +8,7 @@ assessment_checklists/
 config/config.ini
 *.pyc
 __pycache__/
+.pytest_cache/
 *.log
 *.xlsx
 *.pkl
