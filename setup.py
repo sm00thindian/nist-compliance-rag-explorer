@@ -212,14 +212,18 @@ print('Downloaded')
 def run_demo(selected_model):
     python_cmd = get_python_cmd()
     print(f"\nLaunching demo with model: {selected_model}")
-    # CORRECT PYTHONPATH: parent of src/
+    # Run from project root directory with proper Python path
+    project_root = os.path.dirname(os.path.abspath(__file__))  # → /Users/kilynn/Projects/nist-compliance-rag-explorer
+    src_dir = os.path.join(project_root, "src")
     env = os.environ.copy()
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # → /Users/kilynn/Projects/nist-compliance-rag-explorer
-    if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = project_root + os.pathsep + env["PYTHONPATH"]
-    else:
-        env["PYTHONPATH"] = project_root
-    subprocess.run([python_cmd, "-m", "src.main", "--model", selected_model], env=env, check=True)
+    env["PYTHONPATH"] = src_dir
+    print(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
+    print(f"Running command from directory: {project_root}")
+    # Use -c to execute import and run main
+    # Provide input for testing: query, no checklist, select first STIG option, then exit
+    test_input = "How do I assess AU-3?\nn\n1\nexit\n"
+    subprocess.run([python_cmd, "-c", f"import sys; sys.path.insert(0, '{src_dir}'); import main; main.main()"],
+                   env=env, cwd=project_root, input=test_input, text=True, check=True)
 
 
 # === RUN TESTS ===

@@ -113,17 +113,23 @@ class EmbeddingManager:
 
     def get_similarity_search_index(self, embeddings: np.ndarray) -> faiss.Index:
         """Create appropriate FAISS index based on configuration."""
-        dimension = embeddings.shape[1]
+        if embeddings.size == 0:
+            # Handle empty embeddings case
+            dimension = self.dimensions
+        else:
+            dimension = embeddings.shape[1]
 
         if self.similarity_metric == 'cosine':
-            # Normalize embeddings for cosine similarity
-            faiss.normalize_L2(embeddings)
+            # Normalize embeddings for cosine similarity (only if we have embeddings)
+            if embeddings.size > 0:
+                faiss.normalize_L2(embeddings)
             index = faiss.IndexFlatIP(dimension)  # Inner product for cosine
         elif self.similarity_metric == 'l2':
             index = faiss.IndexFlatL2(dimension)  # L2 distance
         else:
             logger.warning(f"Unknown similarity metric {self.similarity_metric}, using cosine")
-            faiss.normalize_L2(embeddings)
+            if embeddings.size > 0:
+                faiss.normalize_L2(embeddings)
             index = faiss.IndexFlatIP(dimension)
 
         return index
@@ -131,6 +137,9 @@ class EmbeddingManager:
     def search(self, query_embedding: np.ndarray, index: faiss.Index,
                doc_list: List[str], top_k: int = 100) -> List[str]:
         """Search for similar documents."""
+        if len(doc_list) == 0:
+            return []
+
         if self.similarity_metric == 'cosine':
             # Normalize query for cosine similarity
             faiss.normalize_L2(query_embedding)

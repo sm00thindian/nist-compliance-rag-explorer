@@ -46,12 +46,13 @@ def build_vector_store(documents: List[str], embedding_manager: EmbeddingManager
         # Create appropriate index based on similarity metric
         index = embedding_manager.get_similarity_search_index(embeddings)
 
-        # Add embeddings to index
-        if embedding_manager.similarity_metric == 'cosine':
-            # Embeddings already normalized in get_similarity_search_index
-            index.add(embeddings)
-        else:
-            index.add(embeddings)
+        # Add embeddings to index (only if we have embeddings)
+        if embeddings.size > 0:
+            if embedding_manager.similarity_metric == 'cosine':
+                # Embeddings already normalized in get_similarity_search_index
+                index.add(embeddings)
+            else:
+                index.add(embeddings)
 
         doc_list = documents
 
