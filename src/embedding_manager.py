@@ -2,15 +2,49 @@
 Enhanced embedding manager with model validation, fallbacks, and performance optimizations.
 """
 import os
+import sys
 import logging
+import tempfile
 import time
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from sentence_transformers import SentenceTransformer
+from transformers.utils import logging as transformers_logging
 import faiss
 import numpy as np
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+@contextmanager
+def _capture_console_output():
+    """Capture direct stdout/stderr writes around a block of code."""
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+    saved_stdout_fd = os.dup(stdout_fd)
+    saved_stderr_fd = os.dup(stderr_fd)
+
+    with tempfile.TemporaryFile(mode='w+b') as tmp:
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(tmp.fileno(), stdout_fd)
+            os.dup2(tmp.fileno(), stderr_fd)
+            yield tmp
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(saved_stdout_fd, stdout_fd)
+            os.dup2(saved_stderr_fd, stderr_fd)
+            os.close(saved_stdout_fd)
+            os.close(saved_stderr_fd)
+
+
+def _normalize_transformer_output(raw: str) -> str:
+    raw = raw.replace('\r', '\n')
+    lines = [line for line in raw.splitlines() if line.strip()]
+    filtered = [line for line in lines if not line.startswith('Loading weights:')]
+    return '\n'.join(filtered).strip()
 
 class EmbeddingManager:
     """Enhanced embedding manager with validation and fallbacks."""
@@ -35,6 +69,13 @@ class EmbeddingManager:
         """Load the embedding model with fallbacks."""
         model_candidates = [self.model_name] + self.fallbacks
 
+        # Configure transformer logging once to prevent direct stdout/stderr output.
+        try:
+            transformers_logging.disable_default_handler()
+        except Exception:
+            pass
+        transformers_logging.set_verbosity_info()
+
         for candidate in model_candidates:
             try:
                 logger.info(f"Attempting to load embedding model: {candidate}")
@@ -42,9 +83,16 @@ class EmbeddingManager:
                 # Set device
                 device = 'cuda' if self.enable_gpu else 'cpu'
 
-                # Load model
-                start_time = time.time()
-                self.model = SentenceTransformer(candidate, device=device, cache_folder=self.cache_dir)
+                # Capture direct console output from model loading and log it instead of printing it.
+                with _capture_console_output() as capture:
+                    start_time = time.time()
+                    self.model = SentenceTransformer(candidate, device=device, cache_folder=self.cache_dir)
+                    capture.seek(0)
+                    console_output = capture.read().decode('utf-8', errors='replace')
+                    if console_output.strip():
+                        normalized = _normalize_transformer_output(console_output)
+                        logger.info("Suppressing direct transformer load output; captured details in logs.")
+                        logger.debug("Transformer load output:\n%s", normalized)
                 load_time = time.time() - start_time
 
                 # Validate model

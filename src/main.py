@@ -7,6 +7,8 @@ import requests
 from colorama import Fore, Style, init
 import spacy
 from tqdm import tqdm
+import zipfile
+import tempfile
 
 # Local imports
 from retriever import build_vector_store, retrieve_relevant_docs
@@ -32,6 +34,75 @@ ASSESSMENT_PROC = os.path.join(KNOWLEDGE_DIR, "nist_800_53A-rev5_assessment-proc
 CCI_XML = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
 STIG_FOLDER = "stigs"
 
+
+def download_file(url: str, dest_path: str, description: str) -> None:
+    os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+    print(f"Downloading {description} from {url}")
+
+    with requests.get(url, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        total = int(response.headers.get("content-length", 0) or 0)
+        chunk_size = 8192
+        downloaded = 0
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            try:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    tmp_file.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        percent = downloaded * 100 // total
+                        print(f"\r  {description}: {percent}% ({downloaded}/{total} bytes)", end="", flush=True)
+                if total:
+                    print()
+            finally:
+                tmp_file.flush()
+                tmp_name = tmp_file.name
+
+        if url.lower().endswith('.zip') or 'zip' in response.headers.get('content-type', '').lower():
+            with zipfile.ZipFile(tmp_name) as zh:
+                members = [m for m in zh.namelist() if m.lower().endswith('.xml')]
+                if not members:
+                    raise ValueError('Zip archive does not contain an XML file')
+                member = members[0]
+                zh.extract(member, path=os.path.dirname(dest_path) or '.')
+                extracted_path = os.path.join(os.path.dirname(dest_path) or '.', member)
+                os.replace(extracted_path, dest_path)
+            os.remove(tmp_name)
+        else:
+            os.replace(tmp_name, dest_path)
+
+    print(f"Saved {description} to {dest_path}")
+
+
+def verify_artifacts(data_urls: dict, stig_folder: str) -> None:
+    os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
+
+    required_files = [
+        (NIST_CATALOG, data_urls.get('catalog_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json"), 'NIST catalog'),
+        (HIGH_BASELINE, data_urls.get('high_baseline_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json"), 'NIST high baseline'),
+        (ASSESSMENT_PROC, data_urls.get('assessment_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json"), 'NIST assessment procedures'),
+        (CCI_XML, data_urls.get('cci_url', "https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml"), 'CCI mapping XML'),
+    ]
+
+    for path, url, description in required_files:
+        if os.path.exists(path):
+            print(f"{description} exists: {path}")
+            continue
+        try:
+            download_file(url, path, description)
+        except Exception as exc:
+            print(f"Failed to download {description}: {exc}")
+
+    if not os.path.isdir(stig_folder):
+        print(f"Warning: STIG folder not found: {stig_folder}")
+        print("Place STIG XCCDF XML files in the configured STIG folder to enable STIG recommendations.")
+    else:
+        stig_files = [f for f in os.listdir(stig_folder) if f.endswith('.xml')]
+        print(f"Found {len(stig_files)} STIG XML file(s) in {stig_folder}")
+
 # === MAIN ===
 def main():
     # Load configuration
@@ -39,6 +110,16 @@ def main():
     embedding_config = config.get_embedding_config()
     app_config = config.get_app_config()
     data_urls = config.get_data_urls()
+
+    selected_model = os.getenv('SELECTED_EMBEDDING_MODEL')
+    if selected_model:
+        embedding_config['model_name'] = selected_model
+
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+        )
 
     print(f"{Fore.CYAN}Welcome to the Compliance RAG Demo{Style.RESET_ALL}")
     print(f"Using embedding model: {embedding_config['model_name']}")
@@ -54,39 +135,8 @@ def main():
     # Load spaCy (already done in text_processing.py)
     print(f"Loaded spaCy model: {nlp.meta['name']}")
 
-    # Download missing data files
-    os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
-
-    # Use configured URLs or defaults
-    catalog_url = data_urls.get('catalog_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json")
-    high_baseline_url = data_urls.get('high_baseline_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json")
-    assessment_url = data_urls.get('assessment_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json")
-    cci_url = data_urls.get('cci_url', "https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml")
-
-    if not os.path.exists(NIST_CATALOG):
-        print(f"Downloading {NIST_CATALOG}...")
-        response = requests.get(catalog_url)
-        response.raise_for_status()
-        with open(NIST_CATALOG, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-    if not os.path.exists(HIGH_BASELINE):
-        print(f"Downloading {HIGH_BASELINE}...")
-        response = requests.get(high_baseline_url)
-        response.raise_for_status()
-        with open(HIGH_BASELINE, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-    if not os.path.exists(ASSESSMENT_PROC):
-        print(f"Downloading {ASSESSMENT_PROC}...")
-        response = requests.get(assessment_url)
-        response.raise_for_status()
-        with open(ASSESSMENT_PROC, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-    if not os.path.exists(CCI_XML):
-        print(f"Downloading {CCI_XML}...")
-        response = requests.get(cci_url)
-        response.raise_for_status()
-        with open(CCI_XML, 'w', encoding='utf-8') as f:
-            f.write(response.text)
+    stig_folder = app_config.get('stig_folder', STIG_FOLDER)
+    verify_artifacts(data_urls, stig_folder)
 
     # Load NIST data
     try:
@@ -127,7 +177,7 @@ def main():
 
     # Load STIG data
     print("Loading STIG data...")
-    all_stig_recommendations, available_stigs = load_stig_data(STIG_FOLDER, cci_to_nist)
+    all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
 
     # Unknown query log
     unknown_queries = []

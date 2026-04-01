@@ -209,6 +209,48 @@ print('Downloaded')
 
 
 # === RUN DEMO ===
+
+def select_embedding_model(default_model=None):
+    models = [
+        ("all-MiniLM-L12-v2", "Fast, 384D"),
+        ("all-mpnet-base-v2", "Balanced, 768D (Recommended)"),
+        ("multi-qa-MiniLM-L6-cos-v1", "QA-focused, 384D"),
+        ("all-distilroberta-v1", "Good performance, 768D"),
+        ("paraphrase-MiniLM-L6-v2", "Paraphrase tasks, 384D"),
+        ("all-roberta-large-v1", "High accuracy, 1024D"),
+        ("text-embedding-3-small", "OpenAI, 1536D (API key required)"),
+        ("bge-large-en-v1.5", "BGE, 1024D (High performance)"),
+    ]
+
+    if default_model:
+        print(f"Configured embedding model: {default_model}")
+        print("Press Enter to keep it, or choose a different model:")
+    else:
+        print("Select embedding model:")
+
+    for i, (name, desc) in enumerate(models, 1):
+        print(f"  {i}: {name} - {desc}")
+
+    default_choice = None
+    if default_model:
+        for i, (name, _) in enumerate(models, 1):
+            if name == default_model:
+                default_choice = i
+                break
+
+    while True:
+        selection = input("\nEnter 1–8: ").strip()
+        if selection == "" and default_choice is not None:
+            return models[default_choice - 1][0]
+        try:
+            choice = int(selection)
+            if 1 <= choice <= len(models):
+                return models[choice - 1][0]
+        except ValueError:
+            pass
+        print("Please enter a number between 1 and 8, or press Enter to accept the configured model.")
+
+
 def run_demo(selected_model):
     python_cmd = get_python_cmd()
     print(f"\nLaunching demo with model: {selected_model}")
@@ -217,13 +259,11 @@ def run_demo(selected_model):
     src_dir = os.path.join(project_root, "src")
     env = os.environ.copy()
     env["PYTHONPATH"] = src_dir
+    env["SELECTED_EMBEDDING_MODEL"] = selected_model
     print(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
     print(f"Running command from directory: {project_root}")
-    # Use -c to execute import and run main
-    # Provide input for testing: query, no checklist, select first STIG option, then exit
-    test_input = "How do I assess AU-3?\nn\n1\nexit\n"
     subprocess.run([python_cmd, "-c", f"import sys; sys.path.insert(0, '{src_dir}'); import main; main.main()"],
-                   env=env, cwd=project_root, input=test_input, text=True, check=True)
+                   env=env, cwd=project_root, check=True)
 
 
 # === RUN TESTS ===
@@ -252,34 +292,12 @@ def main():
         config = get_config()
         embedding_config = config.get_embedding_config()
 
-        # Use configured model or default
         selected_model = embedding_config.get('model_name', 'all-mpnet-base-v2')
-        print(f"Using configured embedding model: {selected_model}")
+        selected_model = select_embedding_model(default_model=selected_model)
 
-    except ImportError:
+    except Exception:
         # Fallback to interactive selection if config not available
-        models = [
-            ("all-MiniLM-L12-v2", "Fast, 384D"),
-            ("all-mpnet-base-v2", "Balanced, 768D (Recommended)"),
-            ("multi-qa-MiniLM-L6-cos-v1", "QA-focused, 384D"),
-            ("all-distilroberta-v1", "Good performance, 768D"),
-            ("paraphrase-MiniLM-L6-v2", "Paraphrase tasks, 384D"),
-            ("all-roberta-large-v1", "High accuracy, 1024D"),
-            ("text-embedding-3-small", "OpenAI, 1536D (API key required)"),
-            ("bge-large-en-v1.5", "BGE, 1024D (High performance)"),
-        ]
-
-        print("Select embedding model:")
-        for i, (name, desc) in enumerate(models, 1):
-            print(f"  {i}: {name} - {desc}")
-        while True:
-            try:
-                choice = int(input("\nEnter 1–8: "))
-                if 1 <= choice <= 8:
-                    break
-            except:
-                pass
-        selected_model = models[choice - 1][0]
+        selected_model = select_embedding_model()
 
     create_virtual_env()
     install_requirements()

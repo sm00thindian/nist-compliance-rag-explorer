@@ -41,20 +41,17 @@ def build_vector_store(documents: List[str], embedding_manager: EmbeddingManager
         logging.info(f"Loaded existing FAISS index from {index_file}")
     else:
         logging.info(f"Building new FAISS index for {len(documents)} documents...")
-        embeddings = embedding_manager.encode(documents, show_progress=True)
-
-        # Create appropriate index based on similarity metric
-        index = embedding_manager.get_similarity_search_index(embeddings)
-
-        # Add embeddings to index (only if we have embeddings)
-        if embeddings.size > 0:
-            if embedding_manager.similarity_metric == 'cosine':
-                # Embeddings already normalized in get_similarity_search_index
+        if len(documents) == 0:
+            embeddings = np.zeros((0, embedding_manager.dimensions), dtype=np.float32)
+            index = embedding_manager.get_similarity_search_index(embeddings)
+            doc_list = []
+            logging.warning("No documents available to index; creating empty FAISS index.")
+        else:
+            embeddings = embedding_manager.encode(documents, show_progress=True)
+            index = embedding_manager.get_similarity_search_index(embeddings)
+            if embeddings.size > 0:
                 index.add(embeddings)
-            else:
-                index.add(embeddings)
-
-        doc_list = documents
+            doc_list = documents
 
         # Save index
         with open(index_file, 'wb') as f:
