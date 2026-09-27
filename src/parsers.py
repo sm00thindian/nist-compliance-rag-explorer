@@ -426,6 +426,62 @@ def load_cci_mapping(cci_xml_path: str, revision: str = "5") -> Dict[str, str]:
     return mapping
 
 
+_HEIMDALL_ENTRY_RE = re.compile(r"""['"](CCI-\d{6})['"]\s*:\s*['"]([^'"]*)['"]""")
+
+
+def load_cci_mapping_from_heimdall(path: str) -> Dict[str, str]:
+    """Map CCI -> control from MITRE Heimdall's CciNistMappingData.ts.
+
+    Fallback for when DISA's U_CCI_List.xml is unavailable. Heimdall's table
+    mixes revisions (mostly Rev 5, some Rev 4-era targets), so pass the result
+    through reconcile_cci_mapping() before use.
+    """
+    if not os.path.exists(path):
+        logger.warning("Heimdall CCI mapping not found at %s", path)
+        return {}
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    mapping = {}
+    for cci, ref in _HEIMDALL_ENTRY_RE.findall(text):
+        control = normalize_control_id(ref)
+        if control:
+            mapping[cci] = control
+    return mapping
+
+
+def reconcile_cci_mapping(mapping: Dict[str, str], control_details: Dict[str, dict]) -> Tuple[Dict[str, str], dict]:
+    """Make a CCI mapping consistent with the Rev 5 catalog.
+
+    - Targets in the catalog and active: kept.
+    - Targets withdrawn in Rev 5 with exactly one replacement ("incorporated
+      into" / "moved to"): redirected to that control.
+    - Targets withdrawn with none or several replacements: dropped (ambiguous).
+    - Targets not in the Rev 5 catalog at all (e.g. Rev 4 privacy families
+      AR, DI, TR): dropped.
+
+    Returns (clean_mapping, report). report["redirected"] maps CCI ->
+    (original, replacement) so the redirect can be shown to users.
+    """
+    clean: Dict[str, str] = {}
+    report = {"kept": 0, "redirected": {}, "dropped_not_in_rev5": {}, "dropped_ambiguous": {}}
+    for cci, control in mapping.items():
+        ctrl = control_details.get(control)
+        if ctrl is None:
+            report["dropped_not_in_rev5"][cci] = control
+        elif not ctrl.get("withdrawn"):
+            clean[cci] = control
+            report["kept"] += 1
+        else:
+            targets = [t for t in ctrl.get("withdrawn_to", [])
+                       if t in control_details and not control_details[t].get("withdrawn")]
+            if len(targets) == 1:
+                clean[cci] = targets[0]
+                report["redirected"][cci] = (control, targets[0])
+            else:
+                report["dropped_ambiguous"][cci] = (control, targets)
+    return clean, report
+
+
 # ----------------------------------------------------------------------
 #  STIG XCCDF
 # ----------------------------------------------------------------------

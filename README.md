@@ -40,9 +40,18 @@ Launch the interactive demo (src/main.py).
 | [NIST SP 800-53 Rev 5 catalog](https://github.com/usnistgov/oscal-content/tree/main/nist.gov/SP800-53/rev5/json) | OSCAL JSON | Controls, enhancements, parameters, guidance, **and the SP 800-53A Rev 5 assessment objectives and methods** |
 | NIST Low / Moderate / High baselines | OSCAL profile JSON | Baseline membership |
 | DISA CCI List (`U_CCI_List.xml`) | XML | CCI → SP 800-53 Rev 5 control mapping |
+| [MITRE Heimdall CCI table](https://github.com/mitre/heimdall2/blob/master/libs/hdf-converters/src/mappings/CciNistMappingData.ts) (fallback) | TypeScript | CCI → control mapping when no usable DISA list is present |
 | DISA STIGs | XCCDF XML in `stigs/` | Rules, check text and fix text, linked to controls through CCIs |
 
-The NIST files download automatically into `knowledge/`. DISA's download site is often blocked by proxies; if it is, download `U_CCI_List.xml` from the [DISA Cyber Exchange](https://public.cyber.mil/stigs/cci/) and place it in `knowledge/`. Without it, STIG rules cannot be linked to controls, and the app says so at startup.
+The NIST files download automatically into `knowledge/`.
+
+**CCI mappings.** The official source is DISA's CCI list. It is public on the [DISA Cyber Exchange](https://public.cyber.mil/stigs/cci/) (no CAC needed), but the download is often blocked by proxies. Place `U_CCI_List.xml` in `knowledge/` if the automatic download fails. Use a list from 2022 or later: older copies, including those in many GitHub repos, only reference Rev 4.
+
+If no DISA list is present, or it has no Rev 5 references, the app uses MITRE Heimdall's CCI table instead. That table mixes Rev 4 and Rev 5 targets, so it is reconciled against the Rev 5 catalog at load time:
+- mappings to controls Rev 5 withdrew are redirected to the single control they were incorporated into (a CCI lookup notes the redirect);
+- mappings to withdrawn controls with several or no replacements, and to controls that don't exist in Rev 5 (the Rev 4 privacy families AR, DI, TR, etc.), are dropped.
+
+Startup prints which source was used and how many mappings were redirected or dropped.
 
 URLs live in `config/config.ini` (copied from `config/config.ini.template`).
 
