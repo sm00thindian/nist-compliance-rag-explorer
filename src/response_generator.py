@@ -5,7 +5,7 @@ import logging
 import textwrap
 from datetime import datetime
 from colorama import Fore, Style
-from parsers import normalize_control_id, extract_actionable_steps
+from parsers import normalize_control_id, extract_actionable_steps, link_objectives_to_rules
 
 CONTROL_REF_RE = re.compile(r"\b([a-z]{2})\s*-\s*0*(\d+)(?:\s*\(\s*0*(\d+)\s*\))?", re.IGNORECASE)
 
@@ -61,6 +61,40 @@ def find_stig_rule(all_stig_recommendations, rule_ref):
     return None, None
 
 
+def _rule_list(rules, limit=4):
+    ids = list(dict.fromkeys(r.get('vuln_id') or r['rule_id'] for r in rules))
+    more = f", +{len(ids) - limit}" if len(ids) > limit else ""
+    return f"{len(ids)} rule{'s' if len(ids) != 1 else ''} ({', '.join(ids[:limit])}{more})"
+
+
+def objective_evidence(ctrl_key, selected_techs, all_stig_recommendations, cci_to_nist, cci_parts, assessment_details):
+    """{tech: link_objectives_to_rules(...)} for one control."""
+    detail = (assessment_details or {}).get(ctrl_key)
+    if not detail:
+        return {}
+    return {
+        tech: link_objectives_to_rules(ctrl_key, all_stig_recommendations.get(tech, {}).get(ctrl_key, []),
+                                       cci_to_nist, cci_parts or {}, detail)
+        for tech in selected_techs
+    }
+
+
+def coverage_report(tech, all_stig_recommendations, cci_to_nist, cci_parts, assessment_details, control_details):
+    """Objective-level STIG coverage for every control a STIG touches."""
+    by_control = all_stig_recommendations.get(tech, {})
+    rows, covered, total = [], 0, 0
+    for cid in sorted(by_control, key=lambda c: (c.split('-')[0], *map(int, re.findall(r"\d+", c)), )):
+        link = link_objectives_to_rules(cid, by_control[cid], cci_to_nist, cci_parts or {}, (assessment_details or {}).get(cid))
+        if not link['total']:
+            continue
+        covered += link['covered']
+        total += link['total']
+        gaps = [o['label'] for o in link['objectives'] if not o['rules']]
+        rows.append((cid, control_details.get(cid, {}).get('title', ''), link['covered'], link['total'], gaps,
+                     len(link['control_level_rules'])))
+    return rows, covered, total
+
+
 def _purpose(ctrl):
     """One-line summary: first sentence of the guidance, else the first statement line."""
     first = (ctrl.get('description') or '').strip().splitlines()
@@ -114,13 +148,31 @@ def get_technology_name(stig):
     return tech
 
 
-def save_checklist(control_id, steps, stig_recommendations, filename_prefix="checklist"):
+def save_checklist(control_id, steps, stig_recommendations, filename_prefix="checklist", evidence=None):
     checklist_dir = "assessment_checklists"
     os.makedirs(checklist_dir, exist_ok=True)
     filename = os.path.join(checklist_dir, f"{filename_prefix}_{control_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(["Source", "Control/Rule", "Action", "Assessment Task", "Severity", "Expected Evidence", "Status"])
+
+        if evidence:
+            # One row per determination statement, with the STIG rules that provide evidence for it.
+            first = next(iter(evidence.values()))
+            for i, obj in enumerate(first['objectives']):
+                found = {tech: [r.get('vuln_id') or r['rule_id'] for r in link['objectives'][i]['rules']]
+                         for tech, link in evidence.items()}
+                writer.writerow([
+                    "NIST SP 800-53A",
+                    obj['label'] or control_id,
+                    "Test (STIG)" if any(found.values()) else "Examine/Interview",
+                    f"Determine if {obj['text']}",
+                    "N/A",
+                    "; ".join(f"{t}: {', '.join(ids)}" for t, ids in found.items() if ids)
+                    or "No STIG evidence: documents, interviews or other tests",
+                    "Pending"
+                ])
+            steps = [s for s in steps if s.split(":", 1)[0] in ("Examine", "Interview", "Test")]
 
         for i, step in enumerate(steps, 1):
             method = step.split(":", 1)[0] if step.split(":", 1)[0] in ("Examine", "Interview", "Test") else ""
@@ -223,7 +275,8 @@ def _format_stig_table(recs: list, term_width: int, assessing: bool = False) -> 
 # ----------------------------------------------------------------------
 def generate_response(query, retrieved_docs, control_details, high_baseline_controls,
                       all_stig_recommendations, available_stigs, assessment_procedures,
-                      cci_to_nist, generate_checklist=False, cci_redirects=None):
+                      cci_to_nist, generate_checklist=False, cci_redirects=None,
+                      assessment_details=None, cci_parts=None):
     query_lower = query.lower().strip()
     response = []
 
@@ -294,6 +347,29 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 ctrl = control_details[normalized_control]
                 response.append(f"- **Title:** {ctrl['title']}")
                 response.append(f"- **Description:** {ctrl['description']}")
+            return "\n".join(response)
+
+        coverage_match = re.search(r"\bcoverage\b", original_lower)
+        if coverage_match and not find_control_ids(original_query):
+            techs = filter_stigs(available_stigs, detect_technologies(original_lower))
+            if not techs:
+                return f"{Fore.YELLOW}No loaded STIG matches that technology. Try 'list stigs'.{Style.RESET_ALL}"
+            width = _get_terminal_width()
+            for stig in techs:
+                rows, covered, total = coverage_report(stig['technology'], all_stig_recommendations, cci_to_nist,
+                                                       cci_parts, assessment_details, control_details)
+                response.append(f"{Fore.CYAN}800-53A coverage from the {stig['technology']} STIG{Style.RESET_ALL}")
+                if not total:
+                    response.append("- No rules linked to controls (is a CCI mapping loaded?)")
+                    continue
+                response.append(f"- {len(rows)} controls touched; {covered} of {total} determination statements "
+                                f"({covered * 100 // total}%) have STIG evidence. The rest need Examine/Interview evidence.")
+                for cid, title, c, t, gaps, n_control_level in rows:
+                    line = f"{cid} {title}: {c}/{t}" + (f"; no STIG evidence for {', '.join(gaps)}" if gaps else "")
+                    if n_control_level:
+                        line += (f" ({n_control_level} rule{' cites' if n_control_level == 1 else 's cite'} "
+                                 f"{cid} without naming a statement)")
+                    response.extend(_wrap(line, width - 6, "  - ").splitlines())
             return "\n".join(response)
 
         rule_match = re.search(r"\b(s?v-\d{5,6}(?:r\d+_rule)?|[a-z0-9]+-\d{2}-\d{6})\b", original_lower)
@@ -379,7 +455,32 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         if ctrl.get('baseline_levels'):
             response.append(f"   - Baselines: {', '.join(ctrl['baseline_levels'])}")
 
-        if is_assessment_query:
+        evidence = objective_evidence(ctrl_key, selected_techs, all_stig_recommendations,
+                                      cci_to_nist, cci_parts, assessment_details) if cci_to_nist else {}
+
+        if is_assessment_query and evidence:
+            detail = assessment_details[ctrl_key]
+            response.append(f"{Fore.CYAN}   800-53A determination statements and STIG evidence:{Style.RESET_ALL}")
+            first = next(iter(evidence.values()))
+            for i, obj in enumerate(first['objectives']):
+                response.extend(_wrap(f"{obj['label']} Determine if {obj['text']}", term_width - 10, f"     {i + 1}. ").splitlines())
+                for tech, link in evidence.items():
+                    rules = link['objectives'][i]['rules']
+                    note = _rule_list(rules) if rules else f"{Fore.YELLOW}no STIG evidence; use Examine/Interview{Style.RESET_ALL}"
+                    response.extend(_wrap(f"{tech}: {note}", term_width - 10, "        Evidence, ").splitlines())
+            for tech, link in evidence.items():
+                response.append(f"   - STIG coverage, {tech}: {link['covered']} of {link['total']} statements")
+                if link['control_level_rules']:
+                    response.extend(_wrap(
+                        f"{_rule_list(link['control_level_rules'])} "
+                        f"{'cites' if len(link['control_level_rules']) == 1 else 'cite'} {ctrl_key} as a whole, not a specific statement",
+                        term_width - 10, "     ").splitlines())
+            for method in ("EXAMINE", "INTERVIEW", "TEST"):
+                if detail['methods'].get(method):
+                    response.extend(_wrap(f"{method.title()}: {'; '.join(detail['methods'][method])}",
+                                          term_width - 10, "   - ").splitlines())
+
+        elif is_assessment_query:
             response.append(f"{Fore.CYAN}   Assessment Steps:{Style.RESET_ALL}")
             if ctrl_key in assessment_procedures:
                 for i, m in enumerate(assessment_procedures[ctrl_key], 1):
@@ -418,7 +519,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 for tech in selected_techs
             }
             if steps or any(stig_recs.values()):
-                checklist_file = save_checklist(control_id, steps, stig_recs)
+                checklist_file = save_checklist(control_id, steps, stig_recs, evidence=evidence)
                 response.append(f"   - {Fore.GREEN}Checklist Saved:{Style.RESET_ALL} `{checklist_file}`")
 
     if len(response) <= 2:

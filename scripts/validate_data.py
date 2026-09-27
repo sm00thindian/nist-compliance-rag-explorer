@@ -22,6 +22,9 @@ from parsers import (  # noqa: E402
     extract_controls_from_json,
     load_cci_mapping,
     load_cci_mapping_from_heimdall,
+    load_cci_parts,
+    load_cci_parts_from_heimdall,
+    link_objectives_to_rules,
     reconcile_cci_mapping,
     load_cci_records,
     load_stig_data,
@@ -88,10 +91,11 @@ def main():
     # CCI: the DISA list first, then the Heimdall fallback
     cci_path = args.cci or next((p for p in (os.path.join(k, "U_CCI_List.xml"), "U_CCI_List.xml") if os.path.exists(p)), None)
     fallback = args.cci_fallback or os.path.join(k, "CciNistMappingData.ts")
-    raw = {}
+    raw, raw_parts = {}, {}
     if cci_path:
         records = load_cci_records(cci_path)
         raw = load_cci_mapping(cci_path)
+        raw_parts = load_cci_parts(cci_path)
         rev5 = [r for r in records if any(x["version"] == "5" for x in r["references"])]
         print(f"CCI: DISA list {cci_path}: {len(records)} CCIs, {len(rev5)} with a Rev 5 reference, {len(raw)} mapped")
         check(len(records) > 1000, "CCI list parses to more than 1,000 CCIs")
@@ -102,12 +106,13 @@ def main():
         check(len(raw) == len(rev5), "every CCI with a Rev 5 reference maps to a parseable control")
     if not raw and os.path.exists(fallback):
         raw = load_cci_mapping_from_heimdall(fallback)
+        raw_parts = load_cci_parts_from_heimdall(fallback)
         print(f"CCI: no usable DISA list; using MITRE Heimdall fallback {fallback}: {len(raw)} CCIs")
     if not raw:
         print("CCI: no usable Rev 5 CCI mapping (pass --cci or --cci-fallback)")
         failures.append("no usable CCI mapping source")
 
-    cci_to_nist, report = reconcile_cci_mapping(raw, controls)
+    cci_to_nist, report = reconcile_cci_mapping(raw, controls, raw_parts)
     if raw:
         print(f"  reconciled against Rev 5: {report['kept']} kept, {len(report['redirected'])} redirected "
               f"from withdrawn controls, {len(report['dropped_not_in_rev5'])} dropped (not in Rev 5), "
@@ -124,6 +129,13 @@ def main():
         n_controls = len(recs.get(s["technology"], {}))
         print(f"  {s['technology']} ({s['release']}): {mapped}/{s['rule_count']} rules mapped to {n_controls} controls")
         if raw:
+            by_control = recs.get(s["technology"], {})
+            links = [link_objectives_to_rules(c, rules, cci_to_nist, report["parts"], assessment.get(c))
+                     for c, rules in by_control.items()]
+            covered, total = sum(x["covered"] for x in links), sum(x["total"] for x in links)
+            if total:
+                print(f"    800-53A: {covered}/{total} determination statements in those controls have STIG evidence "
+                      f"({covered * 100 // total}%)")
             check(mapped / max(s["rule_count"], 1) >= 0.95, f"{s['technology']}: at least 95% of rules map to a control")
 
     print()
