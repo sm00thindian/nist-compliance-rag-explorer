@@ -12,6 +12,7 @@ from .models import (
     ControlInfo, EvidenceSearchQuery
 )
 from .evidence_evaluator import EvidenceEvaluator
+from parsers import normalize_control_id
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,7 +68,7 @@ async def get_control_info(control_id: str):
     if not evaluator or not evaluator.control_details:
         raise HTTPException(status_code=503, detail="Control data not available")
 
-    normalized_id = evaluator.control_details.get(control_id.upper())
+    normalized_id = evaluator.control_details.get(normalize_control_id(control_id))
     if not normalized_id:
         raise HTTPException(status_code=404, detail=f"Control {control_id} not found")
 

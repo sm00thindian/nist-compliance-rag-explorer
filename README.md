@@ -33,47 +33,60 @@ Download the CCI XML mapping file (U_CCI_List.xml).
 Prompt you to select a Sentence Transformer model (e.g., all-mpnet-base-v2).
 Launch the interactive demo (src/main.py).
 
-##Configuration
-The config.ini file specifies data sources. The default configuration is:
+## Data sources
+
+| Source | Format | What it provides |
+|---|---|---|
+| [NIST SP 800-53 Rev 5 catalog](https://github.com/usnistgov/oscal-content/tree/main/nist.gov/SP800-53/rev5/json) | OSCAL JSON | Controls, enhancements, parameters, guidance, **and the SP 800-53A Rev 5 assessment objectives and methods** |
+| NIST Low / Moderate / High baselines | OSCAL profile JSON | Baseline membership |
+| DISA CCI List (`U_CCI_List.xml`) | XML | CCI → SP 800-53 Rev 5 control mapping |
+| DISA STIGs | XCCDF XML in `stigs/` | Rules, check text and fix text, linked to controls through CCIs |
+
+The NIST files download automatically into `knowledge/`. DISA's download site is often blocked by proxies; if it is, download `U_CCI_List.xml` from the [DISA Cyber Exchange](https://public.cyber.mil/stigs/cci/) and place it in `knowledge/`. Without it, STIG rules cannot be linked to controls, and the app says so at startup.
+
+URLs live in `config/config.ini` (copied from `config/config.ini.template`).
+
+All sources are normalized to one control ID form: `AC-2`, `AC-2(1)`. Statement-part references such as `AC-2 a` (used by CCIs) roll up to their control.
+
+## Validating the data
+
 ```
-[DEFAULT]
-stig_folder = ~/stigs
-nist_800_53_xls_url = https://csrc.nist.gov/files/pubs/sp/800/53/r5/upd1/final/docs/sp800-53r5-control-catalog.xlsx
-catalog_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
-high_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_profile.json
-nist_800_53a_json_url = https://raw.githubusercontent.com/usnistgov/oscal-content/master/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_assessment.json
+python scripts/validate_data.py                  # uses knowledge/ and stigs/
+python scripts/validate_data.py --cci /path/to/U_CCI_List.xml
 ```
-##Notes:
-Update stig_folder to match your local STIG directory.
-Place STIG XCCDF XML files in the stig_folder directory for parsing.
-Usage
-After setup, the CLI starts automatically. Enter queries like:
 
-General Info: What is AC-7?
-Implementation: How should IA-5 be implemented for Windows?
-Assessment: How do I assess AU-3?
-List STIGs: List STIGs or List STIGs for Red Hat
-Exit: exit
-Help: help for examples
-Example output for How do I assess AU-3? (with 800-53A data):
+It parses every source the way the app does and checks that the catalog, baselines, 800-53A procedures, CCI mappings and STIG joins are complete and consistent. Expected on catalog 5.2.0: 1,196 controls (182 withdrawn), baselines 149 / 287 / 370, 800-53A procedures for all 1,014 active controls.
 
-### Response to 'How do I assess AU-3?'
-**Answering:** 'How do I assess AU-3?'
-Here’s what I found based on NIST 800-53 and available STIGs:
+## Usage
 
-**Controls Covered:** AU-3
+After setup, the CLI starts automatically. Example queries:
 
-### Control: AU-3
-- **Title:** Content of Audit Records
-- **Description:** The information system generates audit records containing information that establishes what type of event occurred, when it occurred, where it occurred, the source of the event, the outcome of the event, and the identity of any individuals or subjects associated with the event.
+- General info: `What is AC-7?`
+- Implementation: `How should IA-5 be implemented for Windows?`
+- Assessment: `How do I assess AU-3 on RHEL?`
+- CCI lookup: `What is CCI-000130?` / `list cci mappings for CM-6`
+- STIG rule lookup: `What is V-257987?`
+- List STIGs: `list stigs`
+- Exit: `exit`
 
-#### How to Assess AU-3
-- **NIST SP 800-53A Assessment Steps:**
-  - Examine information system audit records to ensure they contain event type, timestamp, location, source, outcome, and identity as configured.
-  - Interview personnel to verify audit configuration meets organizational requirements.
-- No STIG assessment guidance found.
+Example output for `How do I assess AU-3 on RHEL?`:
 
-**More Info:** [NIST 800-53 Assessment Procedures](https://csrc.nist.gov/projects/risk-management/sp800-53-controls/assessment-procedures)
+```
+### Assessing AU-3
+Based on NIST 800-53 Rev 5 and STIGs for: Red Hat Enterprise Linux 9
+
+1. AU-3 - Content of Audit Records
+   - Purpose: Ensure that audit records contain information that establishes the following:
+   - Baselines: LOW, MODERATE, HIGH
+   Assessment Steps:
+     1. AU-03a. Determine if audit records contain information that establishes what type of event occurred;
+     ...
+     7. Examine: Audit and accountability policy; system security plan; privacy plan; ...
+     8. Interview: Organizational personnel with audit and accountability responsibilities; ...
+     9. Test: Mechanisms implementing system auditing of auditable events
+   STIG Guidance for Red Hat Enterprise Linux 9:
+   (rules mapped to AU-3 through their CCIs, with the STIG check text)
+```
 
 ## Testing
 
@@ -98,7 +111,13 @@ The project includes automated tests to verify functionality. All tests should b
    - STIG ID detection tests
    - RAG response tests
 
-3. **Run individual tests:**
+3. **Run the parser tests** (fast, no model downloads; the real-data tests run when `knowledge/` is populated):
+
+```
+pytest test/test_parsers.py
+```
+
+4. **Run individual tests:**
    ```bash
    # Activate venv first
    source venv/bin/activate  # On macOS/Linux
@@ -135,21 +154,25 @@ spacy==3.7.2
 
 ```
 nist-compliance-rag-explorer/
-├── classic_demo.py       # Setup script
-├── nist_compliance_rag.py # Main program
-├── requirements.txt      # Dependencies
-├── config.ini            # Configuration
-├── stigs/                # STIG XML files (user-provided)
-├── knowledge/            # Generated data (e.g., FAISS index, logs)
-├── README.md             # This file
-└── LICENSE               # Apache 2.0 License
+├── setup.py                  # Creates the venv, installs deps, launches the CLI
+├── src/
+│   ├── main.py               # CLI: downloads data, loads and joins it, answers queries
+│   ├── parsers.py            # OSCAL catalog/profiles, 800-53A, CCI list, STIG XCCDF
+│   ├── response_generator.py # Formats answers
+│   └── api/                  # Evidence evaluation API (proof of concept)
+├── scripts/validate_data.py  # Checks the parsed data against the real sources
+├── config/config.ini.template
+├── stigs/                    # STIG XCCDF files
+├── knowledge/                # Downloaded data and FAISS index (generated)
+└── test/                     # Tests and fixtures
 ```
 
 # Troubleshooting
 Python Version Error: If /opt/homebrew/bin/python3.12 isn’t found, install it with brew install python@3.12.
 STIGs Not Found: Ensure stigs/ contains valid XCCDF XML files and matches stig_folder in config.ini.
 Network Issues: Verify internet connectivity for fetching NIST data and CCI XML.
-Missing 800-53A Data: If assessment steps are inferred rather than detailed, ensure nist_800_53a_json_url is accessible.
+STIG rules show no controls: the CCI list is missing. Place U_CCI_List.xml in knowledge/ and run scripts/validate_data.py.
+Stale answers after updating data: the FAISS index is keyed on the document set, so it rebuilds automatically; delete knowledge/faiss_index_*.pkl to force it.
 
 # Contributing
 Fork the repository.

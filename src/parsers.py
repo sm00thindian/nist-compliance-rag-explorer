@@ -1,278 +1,542 @@
-import re
+"""
+Parsers for the source data behind the explorer.
+
+Every parser here reads the *published* format of its source:
+
+- NIST SP 800-53 Rev 5 catalog, OSCAL JSON (usnistgov/oscal-content). The same
+  file carries the SP 800-53A Rev 5 assessment objectives and methods, so the
+  assessment procedures are read from the catalog too.
+- NIST SP 800-53 Rev 5 baseline profiles, OSCAL JSON.
+- DISA CCI List (U_CCI_List.xml, namespace http://iase.disa.mil/cci).
+- DISA STIG XCCDF 1.1 benchmarks.
+
+All control references are normalized to one canonical form so the sources
+join: base controls as ``AC-2`` and enhancements as ``AC-2(1)``. Statement
+parts (``AC-2 a``, ``AC-2 a.1``) roll up to their control.
+"""
+import logging
 import os
+import re
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------
+#  Control IDs
+# ----------------------------------------------------------------------
+# Accepts: ac-2, AC-02, ac-2.1, AC-2(1), AC-02(01), "AC-2 (1)", "AC-2 a",
+# "AC-2 (4) (a)", "ac-2_smt.a"
+_CONTROL_RE = re.compile(
+    r"""^\s*
+        (?P<family>[A-Za-z]{2})\s*-\s*0*(?P<num>\d+)        # AC-2 / ac-02
+        (?:                                                  # optional enhancement
+            \s*\(\s*0*(?P<enh_paren>\d+)\s*\)                #   (1) / ( 01 )
+          | \.0*(?P<enh_dot>\d+)                             #   .1 (OSCAL ids)
+        )?
+        (?P<rest>.*)$
+    """,
+    re.VERBOSE,
+)
+
+
+def parse_control_ref(ref: str) -> Tuple[str, str]:
+    """Split a control reference into (canonical control ID, statement part).
+
+    >>> parse_control_ref("AC-2 (4) (a)")
+    ('AC-2(4)', '(a)')
+    >>> parse_control_ref("ac-2.1")
+    ('AC-2(1)', '')
+    >>> parse_control_ref("AC-2 a.1")
+    ('AC-2', 'a.1')
+    """
+    if not ref:
+        return "", ""
+    m = _CONTROL_RE.match(str(ref))
+    if not m:
+        return "", ""
+    control = f"{m.group('family').upper()}-{int(m.group('num'))}"
+    enh = m.group("enh_paren") or m.group("enh_dot")
+    if enh:
+        control += f"({int(enh)})"
+    rest = m.group("rest").strip()
+    rest = re.sub(r"^_(smt|obj)\.?", "", rest)  # OSCAL part ids: ac-2_smt.a
+    return control, rest.strip(" .")
 
 
 def normalize_control_id(control_id: str) -> str:
-    """Normalize control ID: uppercase, remove extra spaces, standardize parentheses."""
-    if not control_id:
+    """Return the canonical control ID (``AC-2`` / ``AC-2(1)``), or '' if unparseable.
+
+    Statement parts are dropped so part-level references (as used by CCIs)
+    join to their control.
+    """
+    return parse_control_ref(control_id)[0]
+
+
+def control_family(control_id: str) -> str:
+    cid = normalize_control_id(control_id)
+    return cid.split("-", 1)[0] if cid else ""
+
+
+# ----------------------------------------------------------------------
+#  OSCAL helpers
+# ----------------------------------------------------------------------
+_INSERT_RE = re.compile(r"\{\{\s*insert:\s*param,\s*([^\s}]+)\s*\}\}")
+
+
+def _prop(obj: dict, name: str, cls: Optional[str] = None, default: str = "") -> str:
+    for p in obj.get("props", []) or []:
+        if p.get("name") == name and (cls is None or p.get("class") == cls):
+            return p.get("value", default)
+    return default
+
+
+def _has_prop_value(obj: dict, name: str, value: str) -> bool:
+    return any(p.get("name") == name and p.get("value") == value for p in obj.get("props", []) or [])
+
+
+def _index_params(catalog: dict) -> Dict[str, dict]:
+    """Map every param id (and its alt-identifier) to the param object."""
+    params: Dict[str, dict] = {}
+
+    def add(param_list):
+        for p in param_list or []:
+            params[p["id"]] = p
+            alt = _prop(p, "alt-identifier")
+            if alt:
+                params.setdefault(alt, p)
+
+    def walk_controls(controls):
+        for c in controls or []:
+            add(c.get("params"))
+            walk_controls(c.get("controls"))
+
+    def walk_groups(groups):
+        for g in groups or []:
+            add(g.get("params"))
+            walk_controls(g.get("controls"))
+            walk_groups(g.get("groups"))
+
+    add(catalog.get("params"))
+    walk_controls(catalog.get("controls"))
+    walk_groups(catalog.get("groups"))
+    return params
+
+
+def _render_param(param: dict, params: Dict[str, dict], depth: int = 0) -> str:
+    """Render a parameter the way SP 800-53 prints it."""
+    if depth > 5:
+        return "[parameter]"
+    if "select" in param:
+        sel = param["select"]
+        choices = [_substitute(c, params, depth + 1) for c in sel.get("choice", [])]
+        prefix = "Selection (one or more)" if sel.get("how-many") == "one-or-more" else "Selection"
+        return f"[{prefix}: {'; '.join(choices)}]"
+    label = param.get("label") or param.get("id", "parameter")
+    if not label.lower().startswith("organization-defined"):
+        label = f"organization-defined {label}"
+    return f"[Assignment: {label}]"
+
+
+def _substitute(text: str, params: Dict[str, dict], depth: int = 0) -> str:
+    if not text:
         return ""
-    # Remove extra spaces
-    control_id = re.sub(r'\s+', ' ', control_id.strip())
-    # Uppercase
-    control_id = control_id.upper()
-    # Standardize (a) to (A), etc.
-    control_id = re.sub(r'\((\d+|[a-z])\)', lambda m: f"({m.group(1).upper()})", control_id)
-    return control_id
+
+    def repl(m):
+        p = params.get(m.group(1))
+        return _render_param(p, params, depth) if p else f"[{m.group(1)}]"
+
+    return _INSERT_RE.sub(repl, text)
 
 
-def extract_actionable_steps(description: str) -> List[str]:
-    """
-    Extract actionable assessment steps from NIST control description.
-    Heuristic: look for sentences starting with verbs like 'Verify', 'Ensure', 'Confirm'.
-    """
-    if not description:
-        return []
-
-    steps = []
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', description)
-    
-    action_verbs = {
-        'verify', 'ensure', 'confirm', 'check', 'review', 'validate', 'examine',
-        'determine', 'identify', 'monitor', 'assess', 'test', 'inspect'
-    }
-
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
-        # Split on first verb
-        words = sentence.split()
-        if len(words) < 3:
-            continue
-        first_word = words[0].lower().rstrip('.,;')
-        if first_word in action_verbs:
-            # Clean up
-            step = sentence[0].upper() + sentence[1:]
-            step = re.sub(r'\s+', ' ', step)
-            if not step.endswith(('.', '?')):
-                step += '.'
-            steps.append(step)
-
-    # Fallback: if none found, return first sentence
-    if not steps and sentences:
-        first = sentences[0].strip()
-        if first and not first.endswith(('.', '?')):
-            first += '.'
-        steps.append(first[0].upper() + first[1:])
-
-    return steps[:10]  # Limit to reasonable number
+def _render_statement(part: dict, params: Dict[str, dict], indent: int = 0) -> List[str]:
+    """Flatten a statement part (with labelled items) into lines."""
+    lines = []
+    label = _prop(part, "label")
+    prose = _substitute(part.get("prose", ""), params).strip()
+    text = " ".join(x for x in (label, prose) if x)
+    if text:
+        lines.append(("  " * indent) + text)
+    for sub in part.get("parts", []) or []:
+        if sub.get("name") in ("item", "statement"):
+            lines.extend(_render_statement(sub, params, indent + (1 if text else 0)))
+    return lines
 
 
-# === EXISTING FUNCTIONS BELOW (UNCHANGED) ===
-def _get_control_id(control: dict) -> str:
-    return normalize_control_id(
-        control.get('control_id') or control.get('id') or control.get('controlId') or ''
-    )
+def _iter_catalog_controls(catalog: dict) -> Iterable[Tuple[dict, dict, Optional[dict]]]:
+    """Yield (control, group, parent_control) for every control and enhancement."""
+
+    def walk_controls(controls, group, parent):
+        for c in controls or []:
+            yield c, group, parent
+            yield from walk_controls(c.get("controls"), group, c)
+
+    def walk_groups(groups):
+        for g in groups or []:
+            yield from walk_controls(g.get("controls"), g, None)
+            yield from walk_groups(g.get("groups"))
+
+    yield from walk_controls(catalog.get("controls"), {}, None)
+    yield from walk_groups(catalog.get("groups"))
 
 
-def _get_subcontrols(control: dict) -> list:
-    return control.get('controls', []) if isinstance(control.get('controls', []), list) else []
+def _unwrap_catalog(catalog_json: dict) -> dict:
+    if isinstance(catalog_json, dict) and isinstance(catalog_json.get("catalog"), dict):
+        return catalog_json["catalog"]
+    return catalog_json
 
 
-def _gather_controls(controls_data: list) -> List[dict]:
-    controls = []
-    for control in controls_data:
-        control_id = _get_control_id(control)
-        if not control_id:
-            continue
-        controls.append({
-            'control_id': control_id,
-            'title': control.get('title', ''),
-            'description': control.get('description', ''),
-            'parameters': control.get('parameters', [])
-        })
-        for subcontrol in _get_subcontrols(control):
-            subcontrol_id = _get_control_id(subcontrol)
-            if not subcontrol_id:
-                continue
-            controls.append({
-                'control_id': subcontrol_id,
-                'title': subcontrol.get('title', ''),
-                'description': subcontrol.get('description', ''),
-                'parameters': subcontrol.get('parameters', [])
-            })
-    return controls
-
-
+# ----------------------------------------------------------------------
+#  Catalog
+# ----------------------------------------------------------------------
 def extract_controls_from_json(catalog_json: dict) -> List[dict]:
-    controls = []
-    if isinstance(catalog_json.get('controls'), list):
-        controls = _gather_controls(catalog_json['controls'])
-    elif isinstance(catalog_json.get('catalog'), dict):
-        controls = _gather_controls(catalog_json['catalog'].get('controls', []))
-    else:
-        # Try to find a controls list anywhere in the JSON payload
-        for value in catalog_json.values():
-            if isinstance(value, list) and value and isinstance(value[0], dict) and ('control_id' in value[0] or 'id' in value[0]):
-                controls = _gather_controls(value)
-                break
-    return controls
-    import pandas as pd
-    df = pd.read_excel(excel_path, sheet_name='Controls')
-    controls = []
-    for _, row in df.iterrows():
-        controls.append({
-            'control_id': normalize_control_id(str(row['Control ID'])),
-            'title': str(row['Control Title']),
-            'description': str(row['Control Description']),
-            'parameters': []
-        })
-    return controls
+    """Extract every control and enhancement from an OSCAL SP 800-53 catalog.
 
+    Each record has: control_id (canonical), oscal_id, title, family,
+    family_title, description (statement text with parameters rendered),
+    guidance, parameters, related, parent, withdrawn, withdrawn_to,
+    baseline_levels (empty until apply_baselines is called).
+    """
+    catalog = _unwrap_catalog(catalog_json)
+    if "groups" not in catalog and "controls" not in catalog:
+        raise ValueError(
+            "Not an OSCAL catalog: expected 'catalog.groups' or 'catalog.controls'. "
+            f"Top-level keys were: {list(catalog_json)[:10]}"
+        )
 
-def extract_high_baseline_controls(high_baseline_json: dict) -> List[str]:
-    entries = []
-    controls = []
-    if isinstance(high_baseline_json.get('controls'), list):
-        controls = high_baseline_json['controls']
-    elif isinstance(high_baseline_json.get('high-baseline'), dict):
-        controls = high_baseline_json['high-baseline'].get('controls', [])
-
-    for control in controls:
-        control_id = control.get('control_id') or control.get('id')
-        baseline = control.get('baseline', '')
-        if control_id:
-            entries.append(f"High Baseline, {normalize_control_id(control_id)}: {baseline}")
-    return entries
-
-
-def extract_assessment_procedures(assessment_json: dict) -> Dict[str, List[str]]:
-    procedures = {}
-    controls = []
-    if isinstance(assessment_json.get('controls'), list):
-        controls = assessment_json['controls']
-    elif isinstance(assessment_json.get('assessment-procedures'), list):
-        controls = assessment_json['assessment-procedures']
-
-    for control in controls:
-        control_id = _get_control_id(control)
+    params = _index_params(catalog)
+    records = []
+    for ctrl, group, parent in _iter_catalog_controls(catalog):
+        control_id = normalize_control_id(ctrl.get("id", ""))
         if not control_id:
+            logger.warning("Skipping control with unparseable id: %r", ctrl.get("id"))
             continue
-        methods = []
-        for method in control.get('assessment-methods', []) or control.get('procedures', []):
-            if isinstance(method, dict):
-                methods.append(
-                    method.get('description') or
-                    method.get('assessment_objective') or
-                    method.get('assessment_procedure') or
-                    ''
-                )
-            elif isinstance(method, str):
-                methods.append(method)
-        procedures[control_id] = [m for m in methods if m]
+
+        statement_lines, guidance = [], ""
+        for part in ctrl.get("parts", []) or []:
+            if part.get("name") == "statement":
+                statement_lines.extend(_render_statement(part, params))
+            elif part.get("name") == "guidance":
+                guidance = _substitute(part.get("prose", ""), params).strip()
+
+        withdrawn = _has_prop_value(ctrl, "status", "withdrawn")
+        withdrawn_to, withdrawn_refs, related = [], [], []
+        for link in ctrl.get("links", []) or []:
+            target, part = parse_control_ref(link.get("href", "").lstrip("#"))
+            if not target:
+                continue
+            if link.get("rel") in ("incorporated-into", "moved-to"):
+                withdrawn_to.append(target)
+                withdrawn_refs.append(f"{target}{part}" if part else target)
+            elif link.get("rel") == "related":
+                related.append(target)
+        withdrawn_to = sorted(set(withdrawn_to))
+
+        description = "\n".join(statement_lines)
+        if withdrawn and not description:
+            description = "Withdrawn" + (f": incorporated into {', '.join(dict.fromkeys(withdrawn_refs))}." if withdrawn_refs else ".")
+
+        parameters = [{
+            "id": p.get("id"),
+            "label": _prop(p, "label", "sp800-53a") or p.get("label", ""),
+            "text": _render_param(p, params),
+            "guideline": " ".join(g.get("prose", "") for g in p.get("guidelines", []) or []),
+        } for p in ctrl.get("params", []) or []]
+
+        records.append({
+            "control_id": control_id,
+            "oscal_id": ctrl.get("id"),
+            "title": ctrl.get("title", ""),
+            "family": control_family(control_id),
+            "family_title": group.get("title", ""),
+            "description": description,
+            "guidance": guidance,
+            "parameters": parameters,
+            "related": related,
+            "parent": normalize_control_id(parent["id"]) if parent else "",
+            "withdrawn": withdrawn,
+            "withdrawn_to": withdrawn_to,
+            "baseline_levels": [],
+        })
+    return records
+
+
+def extract_assessment_details(catalog_json: dict) -> Dict[str, dict]:
+    """Extract SP 800-53A Rev 5 objectives and methods embedded in the OSCAL catalog.
+
+    Returns {control_id: {"objectives": [{"label", "text"}],
+                          "methods": {"EXAMINE"|"INTERVIEW"|"TEST": [objects]}}}
+    """
+    catalog = _unwrap_catalog(catalog_json)
+    params = _index_params(catalog)
+    out: Dict[str, dict] = {}
+
+    def walk_objectives(part, acc):
+        prose = _substitute(part.get("prose", ""), params).strip()
+        if prose:
+            acc.append({"label": _prop(part, "label", "sp800-53a") or _prop(part, "label"), "text": prose})
+        for sub in part.get("parts", []) or []:
+            if sub.get("name") == "assessment-objective":
+                walk_objectives(sub, acc)
+
+    for ctrl, _group, _parent in _iter_catalog_controls(catalog):
+        control_id = normalize_control_id(ctrl.get("id", ""))
+        objectives, methods = [], {}
+        for part in ctrl.get("parts", []) or []:
+            if part.get("name") == "assessment-objective":
+                walk_objectives(part, objectives)
+            elif part.get("name") == "assessment-method":
+                method = _prop(part, "method")
+                objects = []
+                for sub in part.get("parts", []) or []:
+                    if sub.get("name") == "assessment-objects":
+                        objects.extend(x.strip() for x in re.split(r"\n\s*\n", sub.get("prose", "")) if x.strip())
+                if method:
+                    methods.setdefault(method, []).extend(objects)
+        if control_id and (objectives or methods):
+            out[control_id] = {"objectives": objectives, "methods": methods}
+    return out
+
+
+def extract_assessment_procedures(catalog_json: dict) -> Dict[str, List[str]]:
+    """SP 800-53A procedures as display strings, keyed by canonical control ID.
+
+    Objectives come first ("AU-03a. Determine if ..."), then the EXAMINE /
+    INTERVIEW / TEST methods with their assessment objects.
+    """
+    procedures = {}
+    for control_id, detail in extract_assessment_details(catalog_json).items():
+        steps = [
+            f"{o['label']} Determine if {o['text']}" if o["label"] else f"Determine if {o['text']}"
+            for o in detail["objectives"]
+        ]
+        for method in ("EXAMINE", "INTERVIEW", "TEST"):
+            objects = detail["methods"].get(method)
+            if objects:
+                steps.append(f"{method.title()}: {'; '.join(objects)}")
+        procedures[control_id] = steps
     return procedures
 
 
-def _strip_namespace(tag: str) -> str:
-    return tag.split('}', 1)[-1] if '}' in tag else tag
+# ----------------------------------------------------------------------
+#  Baselines
+# ----------------------------------------------------------------------
+def extract_baseline_control_ids(profile_json: dict) -> Set[str]:
+    """Return the canonical control IDs selected by an OSCAL baseline profile."""
+    profile = profile_json.get("profile", profile_json)
+    if "imports" not in profile:
+        raise ValueError(
+            "Not an OSCAL profile: expected 'profile.imports'. "
+            f"Top-level keys were: {list(profile_json)[:10]}"
+        )
+    ids: Set[str] = set()
+    for imp in profile.get("imports", []):
+        if "include-all" in imp:
+            raise ValueError("Profile uses include-all; resolve it against the catalog instead.")
+        for inc in imp.get("include-controls", []) or []:
+            for cid in inc.get("with-ids", []) or []:
+                norm = normalize_control_id(cid)
+                if norm:
+                    ids.add(norm)
+            if inc.get("matching"):
+                logger.warning("Profile uses 'matching' selectors, which are not resolved here.")
+        for exc in imp.get("exclude-controls", []) or []:
+            for cid in exc.get("with-ids", []) or []:
+                ids.discard(normalize_control_id(cid))
+    return ids
 
 
-def _find_child_text(parent: ET.Element, child_name: str) -> str | None:
-    for child in parent:
-        if _strip_namespace(child.tag) == child_name and child.text:
-            return child.text.strip()
-    return None
+def extract_high_baseline_controls(high_baseline_json: dict) -> List[str]:
+    """Sorted canonical control IDs in the High baseline (kept for compatibility)."""
+    return sorted(extract_baseline_control_ids(high_baseline_json))
 
 
-def _find_children(parent: ET.Element, child_name: str) -> list[ET.Element]:
-    return [child for child in parent if _strip_namespace(child.tag) == child_name]
+def apply_baselines(control_details: Dict[str, dict], baselines: Dict[str, Set[str]]) -> None:
+    """Fill each control's baseline_levels from {"LOW": ids, "MODERATE": ids, "HIGH": ids}."""
+    for level, ids in baselines.items():
+        for cid in sorted(ids):
+            if cid in control_details:
+                levels = control_details[cid].setdefault("baseline_levels", [])
+                if level not in levels:
+                    levels.append(level)
+            else:
+                logger.warning("Baseline %s lists %s, which is not in the catalog", level, cid)
 
 
-def load_cci_mapping(cci_xml_path: str) -> Dict[str, str]:
-    if not os.path.exists(cci_xml_path):
-        return {}
+# ----------------------------------------------------------------------
+#  DISA CCI List
+# ----------------------------------------------------------------------
+def _local(tag: str) -> str:
+    return tag.split("}", 1)[-1] if "}" in tag else tag
 
+
+def load_cci_records(cci_xml_path: str) -> List[dict]:
+    """Parse U_CCI_List.xml into records.
+
+    Each record: cci_id, definition, status, type, and references — a list of
+    {version, title, index, control_id, part} for every SP 800-53 reference
+    (800-53A references are skipped).
+    """
     tree = ET.parse(cci_xml_path)
-    root = tree.getroot()
-    mapping = {}
-
-    for item in root.iter():
-        if _strip_namespace(item.tag) != 'cci_item':
+    records = []
+    for item in tree.getroot().iter():
+        if _local(item.tag) != "cci_item":
             continue
-
-        cci_id = None
-        control_id = None
+        rec = {"cci_id": item.get("id", "").strip(), "definition": "", "status": "", "type": "", "references": []}
         for child in item:
-            tag = _strip_namespace(child.tag)
-            if tag == 'cci_id' and child.text:
-                cci_id = child.text.strip()
-            elif tag in {'nist_control', 'nist_control_id', 'control'} and child.text:
-                control_id = child.text.strip()
+            name = _local(child.tag)
+            if name in ("definition", "status", "type"):
+                rec[name] = (child.text or "").strip()
+            elif name == "references":
+                for ref in child:
+                    if _local(ref.tag) != "reference":
+                        continue
+                    title = ref.get("title", "")
+                    if "800-53" not in title or "800-53A" in title:
+                        continue
+                    index = ref.get("index", "")
+                    control_id, part = parse_control_ref(index)
+                    rec["references"].append({
+                        "version": ref.get("version", "").strip(),
+                        "title": title,
+                        "index": index,
+                        "control_id": control_id,
+                        "part": part,
+                    })
+        if rec["cci_id"]:
+            records.append(rec)
+    return records
 
-        if cci_id and control_id:
-            mapping[cci_id] = normalize_control_id(control_id)
-            continue
 
-        nist_control = item.find('.//cci:references/cci:reference[@index="800-53"]/cci:control',
-                                 {'cci': 'http://iase.disa.mil/cci'})
-        if nist_control is not None and nist_control.text:
-            mapping[item.get('id')] = normalize_control_id(nist_control.text)
+def load_cci_mapping(cci_xml_path: str, revision: str = "5") -> Dict[str, str]:
+    """Map CCI ID -> canonical SP 800-53 control, using the given revision only.
 
+    CCIs with no reference for that revision are left out rather than mapped
+    to an older revision's control, since Rev 4 and Rev 5 numbering differ.
+    """
+    if not os.path.exists(cci_xml_path):
+        logger.warning("CCI list not found at %s; STIG rules will not map to controls.", cci_xml_path)
+        return {}
+    mapping = {}
+    for rec in load_cci_records(cci_xml_path):
+        for ref in rec["references"]:
+            if ref["version"] == revision and ref["control_id"]:
+                mapping[rec["cci_id"]] = ref["control_id"]
+                break
     return mapping
 
 
+# ----------------------------------------------------------------------
+#  STIG XCCDF
+# ----------------------------------------------------------------------
+def _child(el: ET.Element, name: str) -> Optional[ET.Element]:
+    for c in el:
+        if _local(c.tag) == name:
+            return c
+    return None
+
+
+def _child_text(el: ET.Element, name: str) -> str:
+    c = _child(el, name)
+    return (c.text or "").strip() if c is not None and c.text else ""
+
+
+def _vuln_discussion(description: str) -> str:
+    m = re.search(r"<VulnDiscussion>(.*?)</VulnDiscussion>", description or "", re.S)
+    return (m.group(1) if m else description or "").strip()
+
+
+def parse_stig_file(file_path: str) -> Tuple[dict, List[dict]]:
+    """Parse one XCCDF benchmark into (stig_info, rules)."""
+    root = ET.parse(file_path).getroot()
+    title = _child_text(root, "title") or os.path.basename(file_path)
+    release = ""
+    for el in root:
+        if _local(el.tag) == "plain-text" and el.get("id") == "release-info":
+            release = (el.text or "").strip()
+    info = {
+        "file": os.path.basename(file_path),
+        "title": title,
+        "technology": re.sub(r"\s*Security Technical Implementation Guide\s*$", "", title).strip() or title,
+        "version": _child_text(root, "version"),
+        "release": release,
+    }
+
+    rules = []
+    for group in root.iter():
+        if _local(group.tag) != "Group":
+            continue
+        rule = _child(group, "Rule")
+        if rule is None:
+            continue
+        check = _child(rule, "check")
+        rules.append({
+            "vuln_id": group.get("id", ""),
+            "rule_id": rule.get("id", ""),
+            "stig_id": _child_text(rule, "version"),
+            "title": _child_text(rule, "title"),
+            "severity": rule.get("severity", "medium"),
+            "discussion": _vuln_discussion(_child_text(rule, "description")),
+            "check": _child_text(check, "check-content") if check is not None else "",
+            "fix": _child_text(rule, "fixtext"),
+            "ccis": [
+                (i.text or "").strip()
+                for i in rule
+                if _local(i.tag) == "ident" and "cci" in i.get("system", "").lower() and i.text
+            ],
+        })
+    return info, rules
+
+
 def load_stig_data(stig_folder: str, cci_to_nist: Dict[str, str]) -> tuple:
-    all_recommendations = {}
+    """Load every XCCDF file in a folder and index its rules by control.
+
+    Returns (recommendations, available_stigs) where recommendations is
+    {technology: {control_id: [rule, ...]}}. Each stig_info also records
+    rule_count and unmapped_rules so a missing CCI list is visible.
+    """
+    all_recommendations: Dict[str, Dict[str, List[dict]]] = {}
     available_stigs = []
 
-    if not os.path.exists(stig_folder):
-        print(f"STIG folder not found: {stig_folder}")
+    if not os.path.isdir(stig_folder):
+        logger.warning("STIG folder not found: %s", stig_folder)
         return all_recommendations, available_stigs
 
-    for stig_file in os.listdir(stig_folder):
-        if not stig_file.endswith('.xml'):
+    for stig_file in sorted(os.listdir(stig_folder)):
+        if not stig_file.lower().endswith(".xml"):
+            continue
+        try:
+            info, rules = parse_stig_file(os.path.join(stig_folder, stig_file))
+        except ET.ParseError as e:
+            logger.error("Error parsing %s: %s", stig_file, e)
             continue
 
-        file_path = os.path.join(stig_folder, stig_file)
-        try:
-            tree = ET.parse(file_path)
-            root = tree.getroot()
+        by_control: Dict[str, List[dict]] = {}
+        unmapped = 0
+        for rule in rules:
+            controls = {cci_to_nist[c] for c in rule["ccis"] if c in cci_to_nist}
+            if not controls:
+                unmapped += 1
+            for control in sorted(controls):
+                by_control.setdefault(control, []).append(rule)
 
-            title = _find_child_text(root, 'title') or 'Unknown STIG'
-            technology = title
-            stig_info = {
-                'file': stig_file,
-                'title': title,
-                'technology': technology
-            }
-            available_stigs.append(stig_info)
-
-            recommendations = {}
-            for rule in root.iter():
-                if _strip_namespace(rule.tag) != 'Rule':
-                    continue
-
-                rule_id = rule.get('id', 'unknown-rule')
-                title_text = _find_child_text(rule, 'title') or 'Unknown rule title'
-                severity_text = _find_child_text(rule, 'severity') or 'medium'
-                fix_text = _find_child_text(rule, 'fixtext') or ''
-
-                matched_controls = set()
-                for ident in rule.iter():
-                    if _strip_namespace(ident.tag) != 'ident':
-                        continue
-                    system_attr = ident.get('system', '')
-                    if 'cci' not in system_attr.lower():
-                        continue
-                    if ident.text:
-                        cci_id = ident.text.strip()
-                        if cci_id in cci_to_nist:
-                            matched_controls.add(cci_to_nist[cci_id])
-
-                for control in matched_controls:
-                    if control not in recommendations:
-                        recommendations[control] = []
-                    recommendations[control].append({
-                        'rule_id': rule_id,
-                        'title': title_text,
-                        'severity': severity_text,
-                        'fix': fix_text
-                    })
-
-            all_recommendations[technology] = recommendations
-        except Exception as e:
-            print(f"Error parsing {stig_file}: {e}")
-
+        info["rule_count"] = len(rules)
+        info["unmapped_rules"] = unmapped
+        available_stigs.append(info)
+        all_recommendations[info["technology"]] = by_control
+        if rules and unmapped == len(rules):
+            logger.warning("%s: none of %d rules mapped to a control (is the CCI list loaded?)", stig_file, len(rules))
     return all_recommendations, available_stigs
+
+
+def extract_actionable_steps(description: str) -> List[str]:
+    """Fallback only: verb-led sentences from control text when no 800-53A data exists."""
+    if not description:
+        return []
+    action_verbs = {
+        "verify", "ensure", "confirm", "check", "review", "validate", "examine",
+        "determine", "identify", "monitor", "assess", "test", "inspect",
+    }
+    sentences = [s.strip() for s in re.split(r"(?<=[.;:?])\s+|\n", description) if s.strip()]
+    steps = [s for s in sentences if s.split() and s.split()[0].lower().strip(".,;") in action_verbs]
+    return (steps or sentences[:1])[:10]

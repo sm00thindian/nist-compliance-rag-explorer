@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Small sample in the structure of DISA's U_CCI_List.xml, used to test the
+  parser offline. It is NOT a copy of the authoritative list: definitions are
+  abbreviated and only a handful of CCIs are included. Validate against the
+  real file with scripts/validate_data.py.
+-->
+<cci_list xmlns="http://iase.disa.mil/cci" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <metadata>
+    <version>sample</version>
+    <publishdate>2024-01-01</publishdate>
+  </metadata>
+  <cci_items>
+    <cci_item id="CCI-000048">
+      <status>draft</status>
+      <definition>Display an organization-defined system use notification message or banner before granting access to the system.</definition>
+      <type>technical</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53" version="3" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AC-8 a" />
+        <reference creator="NIST" title="NIST SP 800-53A" version="1" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AC-8.1 (i and ii)" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AC-8 a" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 5" version="5" location="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" index="AC-8 a" />
+      </references>
+    </cci_item>
+    <cci_item id="CCI-000130">
+      <status>draft</status>
+      <definition>Ensure that audit records contain information that establishes what type of event occurred.</definition>
+      <type>technical</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53" version="3" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AU-3" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AU-3" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 5" version="5" location="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" index="AU-3 a" />
+      </references>
+    </cci_item>
+    <cci_item id="CCI-000196">
+      <status>draft</status>
+      <definition>For password-based authentication, store passwords using an approved salted key derivation function.</definition>
+      <type>technical</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="IA-5 (1) (c)" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 5" version="5" location="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" index="IA-5 (1) (d)" />
+      </references>
+    </cci_item>
+    <cci_item id="CCI-000366">
+      <status>draft</status>
+      <definition>Implement the security configuration settings.</definition>
+      <type>policy</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="CM-6 b" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 5" version="5" location="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" index="CM-6 b" />
+      </references>
+    </cci_item>
+    <cci_item id="CCI-001453">
+      <status>draft</status>
+      <definition>Implement cryptographic mechanisms to protect the integrity of remote access sessions.</definition>
+      <type>technical</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="AC-17 (2)" />
+        <reference creator="NIST" title="NIST SP 800-53 Revision 5" version="5" location="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" index="AC-17 (2)" />
+      </references>
+    </cci_item>
+    <cci_item id="CCI-999999">
+      <status>deprecated</status>
+      <definition>Rev 4-only sample entry; must not be mapped when Rev 5 is requested.</definition>
+      <type>technical</type>
+      <references>
+        <reference creator="NIST" title="NIST SP 800-53 Revision 4" version="4" location="http://csrc.nist.gov/publications/PubsSPs.html" index="SA-12 (1)" />
+      </references>
+    </cci_item>
+  </cci_items>
+</cci_list>

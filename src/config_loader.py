@@ -125,8 +125,9 @@ class Config:
         """Get data source URLs."""
         return {
             'catalog_url': self.get('catalog_url'),
+            'low_baseline_url': self.get('low_baseline_url'),
+            'moderate_baseline_url': self.get('moderate_baseline_url'),
             'high_baseline_url': self.get('high_baseline_url'),
-            'assessment_url': self.get('nist_800_53a_json_url'),
             'cci_url': self.get('cci_url'),
             'attack_mapping_url': self.get('nist_800_53_attack_mapping_url')
         }

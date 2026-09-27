@@ -22,5 +22,6 @@ def test_rag_cci_lookup(mock_input):
         pass
 
     output = captured.getvalue()
-    assert "CCI-000130 maps to NIST AU-3" in output or "AU-3" in output
+    # The welcome banner already mentions AU-3, so only the exact mapping line counts.
+    assert "CCI-000130 maps to NIST AU-3" in output
     print("test_rag_response.py: PASSED (CCI lookup)")

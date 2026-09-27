@@ -14,8 +14,9 @@ import tempfile
 from retriever import build_vector_store, retrieve_relevant_docs
 from parsers import (
     extract_controls_from_json,
-    extract_high_baseline_controls,
+    extract_baseline_control_ids,
     extract_assessment_procedures,
+    apply_baselines,
     load_cci_mapping,
     load_stig_data
 )
@@ -29,9 +30,15 @@ init(autoreset=True)
 # === CONFIG ===
 KNOWLEDGE_DIR = "knowledge"
 NIST_CATALOG = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_catalog_json.json")
-HIGH_BASELINE = os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_high-baseline_json.json")
-ASSESSMENT_PROC = os.path.join(KNOWLEDGE_DIR, "nist_800_53A-rev5_assessment-procedures_json.json")
+BASELINES = {
+    "LOW": os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_low-baseline_json.json"),
+    "MODERATE": os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_moderate-baseline_json.json"),
+    "HIGH": os.path.join(KNOWLEDGE_DIR, "nist_800_53-rev5_high-baseline_json.json"),
+}
+# SP 800-53A Rev 5 assessment objectives and methods ship inside the OSCAL
+# catalog, so there is no separate assessment-procedures file.
 CCI_XML = os.path.join(KNOWLEDGE_DIR, "U_CCI_List.xml")
+CCI_XML_FALLBACKS = ["U_CCI_List.xml"]
 STIG_FOLDER = "stigs"
 
 
@@ -66,7 +73,8 @@ def download_file(url: str, dest_path: str, description: str) -> None:
                 members = [m for m in zh.namelist() if m.lower().endswith('.xml')]
                 if not members:
                     raise ValueError('Zip archive does not contain an XML file')
-                member = members[0]
+                preferred = [m for m in members if 'cci_list' in os.path.basename(m).lower()]
+                member = (preferred or members)[0]
                 zh.extract(member, path=os.path.dirname(dest_path) or '.')
                 extracted_path = os.path.join(os.path.dirname(dest_path) or '.', member)
                 os.replace(extracted_path, dest_path)
@@ -81,15 +89,20 @@ def verify_artifacts(data_urls: dict, stig_folder: str) -> None:
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
 
     required_files = [
-        (NIST_CATALOG, data_urls.get('catalog_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_CATALOG.json"), 'NIST catalog'),
-        (HIGH_BASELINE, data_urls.get('high_baseline_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53_rev5_HIGH-baseline.json"), 'NIST high baseline'),
-        (ASSESSMENT_PROC, data_urls.get('assessment_url', "https://raw.githubusercontent.com/usnistgov/SP800-53-rev5/master/json/NIST_SP-800-53A_rev5_assessment-procedures.json"), 'NIST assessment procedures'),
-        (CCI_XML, data_urls.get('cci_url', "https://public.cyber.mil/stigs/downloads/cci/U_CCI_List.xml"), 'CCI mapping XML'),
+        (NIST_CATALOG, data_urls.get('catalog_url'), 'NIST SP 800-53 Rev 5 catalog (includes 800-53A)'),
+        (BASELINES["LOW"], data_urls.get('low_baseline_url'), 'NIST Low baseline'),
+        (BASELINES["MODERATE"], data_urls.get('moderate_baseline_url'), 'NIST Moderate baseline'),
+        (BASELINES["HIGH"], data_urls.get('high_baseline_url'), 'NIST High baseline'),
     ]
+    if not resolve_cci_path():
+        required_files.append((CCI_XML, data_urls.get('cci_url'), 'DISA CCI list'))
 
     for path, url, description in required_files:
         if os.path.exists(path):
             print(f"{description} exists: {path}")
+            continue
+        if not url:
+            print(f"No URL configured for {description}; skipping download.")
             continue
         try:
             download_file(url, path, description)
@@ -102,6 +115,59 @@ def verify_artifacts(data_urls: dict, stig_folder: str) -> None:
     else:
         stig_files = [f for f in os.listdir(stig_folder) if f.endswith('.xml')]
         print(f"Found {len(stig_files)} STIG XML file(s) in {stig_folder}")
+
+def resolve_cci_path():
+    """Return the first CCI list found locally, or None."""
+    for path in [CCI_XML] + CCI_XML_FALLBACKS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def load_knowledge(stig_folder: str) -> dict:
+    """Load and join every data source. Fails loudly if the catalog is empty."""
+    with open(NIST_CATALOG, 'r', encoding='utf-8') as f:
+        catalog_json = json.load(f)
+    control_details = {c['control_id']: c for c in extract_controls_from_json(catalog_json)}
+    if not control_details:
+        raise RuntimeError(f"No controls parsed from {NIST_CATALOG}; is it an OSCAL SP 800-53 catalog?")
+
+    baselines = {}
+    for level, path in BASELINES.items():
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                baselines[level] = extract_baseline_control_ids(json.load(f))
+        else:
+            print(f"{Fore.YELLOW}Warning: {level} baseline not found at {path}{Style.RESET_ALL}")
+    apply_baselines(control_details, baselines)
+
+    assessment_procedures = extract_assessment_procedures(catalog_json)
+
+    cci_path = resolve_cci_path()
+    cci_to_nist = load_cci_mapping(cci_path) if cci_path else {}
+    all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
+
+    summary = {
+        'controls': len(control_details),
+        'withdrawn': sum(1 for c in control_details.values() if c['withdrawn']),
+        'baselines': {k: len(v) for k, v in baselines.items()},
+        'assessed_controls': len(assessment_procedures),
+        'cci_mappings': len(cci_to_nist),
+        'stigs': [
+            f"{s['technology']}: {s['rule_count'] - s['unmapped_rules']}/{s['rule_count']} rules mapped"
+            for s in available_stigs
+        ],
+    }
+    return {
+        'control_details': control_details,
+        'high_baseline_controls': sorted(baselines.get('HIGH', set())),
+        'assessment_procedures': assessment_procedures,
+        'cci_to_nist': cci_to_nist,
+        'all_stig_recommendations': all_stig_recommendations,
+        'available_stigs': available_stigs,
+        'summary': summary,
+    }
+
 
 # === MAIN ===
 def main():
@@ -138,46 +204,41 @@ def main():
     stig_folder = app_config.get('stig_folder', STIG_FOLDER)
     verify_artifacts(data_urls, stig_folder)
 
-    # Load NIST data
+    # Load and join NIST, CCI and STIG data
     try:
-        print("Fetching NIST SP 800-53 Rev 5 catalog data...")
-        with open(NIST_CATALOG, 'r', encoding='utf-8') as f:
-            catalog_json = json.load(f)
-        control_details = {c['control_id']: c for c in extract_controls_from_json(catalog_json)}
-
-        print("Fetching NIST SP 800-53 Rev 5 High baseline JSON data...")
-        with open(HIGH_BASELINE, 'r', encoding='utf-8') as f:
-            high_baseline_json = json.load(f)
-        high_baseline_controls = extract_high_baseline_controls(high_baseline_json)
-
-        print("Fetching NIST SP 800-53A assessment procedures JSON data...")
-        with open(ASSESSMENT_PROC, 'r', encoding='utf-8') as f:
-            assessment_json = json.load(f)
-        assessment_procedures = extract_assessment_procedures(assessment_json)
+        print("Loading NIST SP 800-53 Rev 5 catalog, 800-53A procedures, baselines, CCI list and STIGs...")
+        kb = load_knowledge(stig_folder)
     except FileNotFoundError as e:
-        print(f"{Fore.RED}Error: Required data files not found. Please ensure the following files are present in the 'knowledge' directory:")
-        print(f"  - {NIST_CATALOG}")
-        print(f"  - {HIGH_BASELINE}")
-        print(f"  - {ASSESSMENT_PROC}")
-        print(f"  - {CCI_XML}")
-        print("Download them from the appropriate NIST sources and place them in the 'knowledge' directory.{Style.RESET_ALL}")
+        print(f"{Fore.RED}Error: required data file not found: {e.filename}")
+        print(f"Check network access or place the file in the '{KNOWLEDGE_DIR}' directory.{Style.RESET_ALL}")
         sys.exit(1)
+    control_details = kb['control_details']
+    high_baseline_controls = kb['high_baseline_controls']
+    assessment_procedures = kb['assessment_procedures']
+    cci_to_nist = kb['cci_to_nist']
+    all_stig_recommendations = kb['all_stig_recommendations']
+    available_stigs = kb['available_stigs']
+
+    summary = kb['summary']
+    print(f"Loaded {summary['controls']} controls ({summary['withdrawn']} withdrawn), "
+          f"baselines {summary['baselines']}, 800-53A procedures for {summary['assessed_controls']} controls, "
+          f"{summary['cci_mappings']} CCI mappings")
+    for line in summary['stigs']:
+        print(f"  STIG {line}")
+    if not cci_to_nist:
+        print(f"{Fore.YELLOW}Warning: no CCI list loaded, so STIG rules cannot be linked to controls. "
+              f"Place U_CCI_List.xml in '{KNOWLEDGE_DIR}'.{Style.RESET_ALL}")
 
     # Build vector store
     print("Building vector store...")
     all_docs = []
     for ctrl in control_details.values():
         all_docs.append(f"Catalog, {ctrl['control_id']}: {ctrl['title']}")
-        all_docs.append(f"Description, {ctrl['control_id']}: {ctrl['description'][:500]}")
+        if ctrl['description']:
+            all_docs.append(f"Description, {ctrl['control_id']}: {ctrl['description'][:500]}")
+        if ctrl.get('guidance'):
+            all_docs.append(f"Guidance, {ctrl['control_id']}: {ctrl['guidance'][:500]}")
     index = build_vector_store(all_docs, embedding_manager)
-
-    # Load CCI mapping
-    print("Loading CCI-to-NIST mapping...")
-    cci_to_nist = load_cci_mapping(CCI_XML)
-
-    # Load STIG data
-    print("Loading STIG data...")
-    all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
 
     # Unknown query log
     unknown_queries = []
