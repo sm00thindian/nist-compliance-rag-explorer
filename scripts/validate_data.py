@@ -92,6 +92,11 @@ def main():
         rev5 = [r for r in records if any(x["version"] == "5" for x in r["references"])]
         print(f"CCI: {cci_path}: {len(records)} CCIs, {len(rev5)} with a Rev 5 reference, {len(cci_to_nist)} mapped")
         check(len(records) > 1000, "CCI list parses to more than 1,000 CCIs")
+        if not rev5:
+            newest = max((x["version"] for r in records for x in r["references"]), default="none")
+            print(f"  NOTE  newest SP 800-53 revision referenced in this file: {newest}. "
+                  "Use a CCI list published after DISA added Rev 5 mappings (2022 or later).")
+        check(len(cci_to_nist) > 1000, "more than 1,000 CCIs map to a Rev 5 control")
         check(len(cci_to_nist) == len(rev5), "every CCI with a Rev 5 reference maps to a parseable control")
         unknown = sorted({c for c in cci_to_nist.values() if c not in controls})
         check(not unknown, "every CCI maps to a control in the catalog" + (f" (unknown {unknown[:10]})" if unknown else ""))
@@ -106,7 +111,7 @@ def main():
         mapped = s["rule_count"] - s["unmapped_rules"]
         n_controls = len(recs.get(s["technology"], {}))
         print(f"  {s['technology']} ({s['release']}): {mapped}/{s['rule_count']} rules mapped to {n_controls} controls")
-        if cci_to_nist:
+        if cci_path:
             check(mapped / max(s["rule_count"], 1) >= 0.95, f"{s['technology']}: at least 95% of rules map to a control")
 
     print()
