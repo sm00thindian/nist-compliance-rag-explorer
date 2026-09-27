@@ -27,10 +27,15 @@ def build_vector_store(documents: List[str], embedding_manager: EmbeddingManager
     Example:
         >>> manager, index, doc_list = build_vector_store(['doc1', 'doc2'], embedding_manager, 'knowledge')
     """
-    # Create unique index filename based on model and similarity metric
+    # Key the cached index on the model, the metric AND the documents, so a
+    # change in the source data (or a fixed parser) rebuilds the index instead
+    # of silently reusing a stale one.
     model_name = embedding_manager.model_name
     similarity = embedding_manager.similarity_metric
-    index_hash = hashlib.md5(f"{model_name}_{similarity}".encode()).hexdigest()
+    hasher = hashlib.sha256(f"{model_name}_{similarity}".encode())
+    for doc in documents:
+        hasher.update(b"\0" + doc.encode("utf-8"))
+    index_hash = hasher.hexdigest()[:32]
     index_file = os.path.join(knowledge_dir, f"faiss_index_{index_hash}.pkl")
 
     logging.info(f"Building vector store with model: {model_name}, similarity: {similarity}")

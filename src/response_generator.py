@@ -5,8 +5,69 @@ import logging
 import textwrap
 from datetime import datetime
 from colorama import Fore, Style
-from text_processing import nlp
 from parsers import normalize_control_id, extract_actionable_steps
+
+CONTROL_REF_RE = re.compile(r"\b([a-z]{2})\s*-\s*0*(\d+)(?:\s*\(\s*0*(\d+)\s*\))?", re.IGNORECASE)
+
+
+def find_control_ids(text):
+    """Canonical control IDs mentioned in free text (AC-2, ac-02, AC-2 (1), ac-2(01))."""
+    ids = []
+    for fam, num, enh in CONTROL_REF_RE.findall(text):
+        if fam.upper() not in family_purposes:
+            continue  # skip look-alikes such as SV-230456 or CCI-000130
+        cid = f"{fam.upper()}-{int(num)}" + (f"({int(enh)})" if enh else "")
+        if cid not in ids:
+            ids.append(cid)
+    return ids
+
+
+TECH_PATTERNS = {
+    'windows': ['windows', 'microsoft', 'win10', 'win11'],
+    'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux', 'redhat', 'oracle linux'],
+    'ios': ['ios', 'ipad', 'iphone', 'macos', 'apple'],
+    'android': ['android', 'samsung', 'pixel'],
+    'vmware': ['vmware', 'esxi', 'vsphere'],
+    'solaris': ['solaris'],
+    'splunk': ['splunk'],
+    'tippingpoint': ['tippingpoint', 'trend micro'],
+}
+
+
+def detect_technologies(text):
+    """Technologies named in the query, matched as whole words or phrases."""
+    text = text.lower()
+    return sorted(
+        tech for tech, pats in TECH_PATTERNS.items()
+        if any(re.search(rf"\b{re.escape(p)}\b", text) for p in pats)
+    )
+
+
+def filter_stigs(available_stigs, tech_keywords):
+    if not tech_keywords:
+        return available_stigs
+    pats = [p for t in tech_keywords for p in TECH_PATTERNS[t]]
+    return [s for s in available_stigs if any(re.search(rf"\b{re.escape(p)}\b", s['title'].lower()) for p in pats)]
+
+
+def find_stig_rule(all_stig_recommendations, rule_ref):
+    """Find a STIG rule by Vuln ID (V-257777), rule ID (SV-257777r...) or STIG ID (RHEL-09-...)."""
+    ref = rule_ref.upper()
+    for tech, by_control in all_stig_recommendations.items():
+        for rules in by_control.values():
+            for r in rules:
+                if ref in (r.get('vuln_id', '').upper(), r.get('stig_id', '').upper()) or r['rule_id'].upper().startswith(ref):
+                    return tech, r
+    return None, None
+
+
+def _purpose(ctrl):
+    """One-line summary: first sentence of the guidance, else the first statement line."""
+    first = (ctrl.get('description') or '').strip().splitlines()
+    if not first:
+        return ''
+    return re.sub(r"^(\(?[a-z0-9]{1,2}[.)])\s+", "", first[0].strip())
+
 
 
 # ----------------------------------------------------------------------
@@ -62,43 +123,27 @@ def save_checklist(control_id, steps, stig_recommendations, filename_prefix="che
         writer.writerow(["Source", "Control/Rule", "Action", "Assessment Task", "Severity", "Expected Evidence", "Status"])
 
         for i, step in enumerate(steps, 1):
-            task = step.lower().replace("to assess this control, verify ", "").replace("check parameters: none specified", "").strip()
-            if "[assignment:" in task:
-                task = task.replace("[assignment: organization-defined ", "").replace("]", "").replace("[withdrawn: incorporated into ac-6.]", "Withdrawn (see AC-6)")
-                task = f"Verify {task} as defined by your organization."
-            else:
-                task = f"Verify {task.capitalize()}."
+            method = step.split(":", 1)[0] if step.split(":", 1)[0] in ("Examine", "Interview", "Test") else ""
             writer.writerow([
-                "NIST 800-53",
+                "NIST SP 800-53A",
                 control_id,
-                f"Verify Compliance ({i})",
-                task,
+                method or f"Objective {i}",
+                step,
                 "N/A",
-                "Access control policy, logs, or config screenshots",
+                step.split(":", 1)[1].strip() if method else "See Examine/Interview/Test rows",
                 "Pending"
             ])
 
         for tech, recs in stig_recommendations.items():
             for matched_control, rec_list in recs.items():
                 for rec in rec_list:
-                    fix_lines = rec['fix'].split('\n')
-                    formatted_fix = []
-                    for line in fix_lines:
-                        line = line.strip()
-                        if line and line[0].isdigit() and line[1] == '.':
-                            formatted_fix.append(f"- {line}")
-                        elif line and formatted_fix:
-                            formatted_fix[-1] += f" {line}"
-                        elif line:
-                            formatted_fix.append(f"- {line}")
-                    task = f"Verify {rec['title']}:\n" + "\n".join(formatted_fix)
                     writer.writerow([
                         f"STIG {tech}",
-                        rec['rule_id'],
-                        "Configure and Verify",
-                        task,
+                        f"{rec.get('vuln_id', '')} {rec['rule_id']}".strip(),
+                        "Check and Fix",
+                        f"{rec['title']}\nCheck: {' '.join(rec.get('check', '').split())}",
                         rec.get('severity', 'medium').capitalize(),
-                        "Configuration settings, logs, or admin console screenshots",
+                        f"Fix: {' '.join(rec.get('fix', '').split())}",
                         "Pending"
                     ])
     logging.info(f"Generated checklist: {filename}")
@@ -115,26 +160,11 @@ def _get_terminal_width() -> int:
 def _wrap(text: str, width: int, indent: str = "") -> str:
     if not text:
         return ""
-    wrapper = textwrap.TextWrapper(width=width - len(indent), subsequent_indent=" " * len(indent))
+    wrapper = textwrap.TextWrapper(width=max(width, 40), initial_indent=indent, subsequent_indent=" " * len(indent))
     return "\n".join(wrapper.wrap(text))
 
 
-def _parse_stig_fix(fix_text: str):
-    assessment = ""
-    fix = ""
-    details = []
-    for line in fix_text.splitlines():
-        line = line.strip()
-        if line.lower().startswith("assessment:"):
-            assessment = line[11:].strip()
-        elif line.lower().startswith("fix:"):
-            fix = line[4:].strip()
-        elif line:
-            details.append(line)
-    return assessment, fix, "\n".join(details)
-
-
-def _format_stig_table(recs: list, term_width: int) -> str:
+def _format_stig_table(recs: list, term_width: int, assessing: bool = False) -> str:
     if not recs:
         return "No specific STIG guidance."
 
@@ -153,7 +183,9 @@ def _format_stig_table(recs: list, term_width: int) -> str:
         sev = rec.get('severity', 'medium').capitalize()
         color = severity_colors.get(sev, Fore.WHITE)
 
-        assessment, fix, details = _parse_stig_fix(rec['fix'])
+        check = rec.get('check', '') if assessing else ''
+        fix = rec.get('fix', '') if not assessing else ''
+        details = ", ".join(x for x in (rec.get('vuln_id'), rec.get('stig_id')) if x)
 
         wrapped_title = _wrap(title, title_w)
         title_lines = wrapped_title.splitlines()
@@ -163,18 +195,18 @@ def _format_stig_table(recs: list, term_width: int) -> str:
         for extra in title_lines[1:]:
             lines.append(f"{Fore.CYAN}│ {'':<{rule_w}} │ {extra:<{title_w}} │ {'':<{sev_w}} │{Style.RESET_ALL}")
 
-        if assessment:
-            wrapped = _wrap(assessment, term_width - 10, "│ Assessment: ")
+        if check:
+            wrapped = _wrap(" ".join(check.split()), term_width - 10, "│ Check: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.MAGENTA}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
         if fix:
-            wrapped = _wrap(fix, term_width - 10, "│ Fix: ")
+            wrapped = _wrap(" ".join(fix.split()), term_width - 10, "│ Fix: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
         if details:
-            wrapped = _wrap(details, term_width - 10, "│ Details: ")
+            wrapped = _wrap(details, term_width - 10, "│ IDs: ")
             for line in wrapped.splitlines():
                 lines.append(f"{Fore.WHITE}{Style.BRIGHT}{line}{Style.RESET_ALL}")
 
@@ -217,8 +249,7 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     is_implement_query = any(w in original_lower for w in ['implement', 'configure', 'harden', 'setup'])
     action = "Assessing" if is_assessment_query else "Implementing"
 
-    control_matches = re.findall(r"(\w{2}-\d+(?:\([a-z0-9]+\))?)", original_lower, re.IGNORECASE)
-    control_ids = [normalize_control_id(m.upper()) for m in control_matches] if control_matches else []
+    control_ids = find_control_ids(original_query)
     if not control_ids:
         control_ids = [doc.split(', ')[1].split(': ')[0] for doc in retrieved_docs if "Catalog" in doc]
 
@@ -227,30 +258,10 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
     if tech_index_match:
         selected_idx = int(tech_index_match.group(1))
 
-        doc = nlp(original_lower)
         tech_keywords = []
-        tech_patterns = {
-            'windows': ['windows', 'microsoft', 'win', 'ms', 'windows 10', 'windows server'],
-            'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux', 'redhat'],
-            'ios': ['ios', 'ipad', 'apple', 'macos'],
-            'android': ['android', 'google', 'samsung', 'pixel'],
-            'vmware': ['vmware', 'esxi', 'vsphere'],
-            'solaris': ['solaris', 'sun'],
-            'splunk': ['splunk'],
-            'tippingpoint': ['tippingpoint', 'trend micro'],
-        }
-        for token in doc:
-            t = token.text.lower()
-            for tech, pats in tech_patterns.items():
-                if any(p in t for p in pats):
-                    tech_keywords.append(tech)
-                    break
-        tech_keywords = list(set(tech_keywords))
+        tech_keywords = detect_technologies(original_lower)
 
-        filtered_stigs = [
-            s for s in available_stigs
-            if any(kw in s['title'].lower() for kw in tech_keywords)
-        ] if tech_keywords else available_stigs
+        filtered_stigs = filter_stigs(available_stigs, tech_keywords)
 
         tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         if selected_idx == 0:
@@ -266,14 +277,34 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
         cci_match = re.search(r"(cci-\d+)", original_lower)
         if cci_match:
             cci_id = cci_match.group(1).upper()
-            nist_control = cci_to_nist.get(cci_id, "Not mapped to NIST 800-53 Rev 5")
-            normalized_control = normalize_control_id(nist_control)
+            normalized_control = cci_to_nist.get(cci_id, "")
             response.append(f"{Fore.CYAN}CCI Lookup:{Style.RESET_ALL}")
+            if not cci_to_nist:
+                response.append("- No CCI list is loaded, so CCIs cannot be looked up.")
+                return "\n".join(response)
+            if not normalized_control:
+                response.append(f"- {cci_id} has no NIST SP 800-53 Rev 5 mapping in the loaded CCI list.")
+                return "\n".join(response)
             response.append(f"- {cci_id} maps to NIST {normalized_control}")
             if normalized_control in control_details:
                 ctrl = control_details[normalized_control]
                 response.append(f"- **Title:** {ctrl['title']}")
                 response.append(f"- **Description:** {ctrl['description']}")
+            return "\n".join(response)
+
+        rule_match = re.search(r"\b(s?v-\d{5,6}(?:r\d+_rule)?|[a-z0-9]+-\d{2}-\d{6})\b", original_lower)
+        if rule_match and not find_control_ids(original_query):
+            tech, rule = find_stig_rule(all_stig_recommendations, rule_match.group(1))
+            if not rule:
+                return f"{Fore.YELLOW}No loaded STIG rule matches {rule_match.group(1).upper()} (or the CCI list is not loaded).{Style.RESET_ALL}"
+            controls = sorted({cci_to_nist[c] for c in rule['ccis'] if c in cci_to_nist})
+            response.append(f"{Fore.CYAN}{rule['vuln_id']} / {rule['rule_id']} ({rule['stig_id']}) — {tech}{Style.RESET_ALL}")
+            response.append(f"- **Title:** {rule['title']}")
+            response.append(f"- **Severity:** {rule['severity']}")
+            response.append(f"- **CCIs:** {', '.join(rule['ccis'])}")
+            response.append(f"- **NIST 800-53 Rev 5:** {', '.join(controls) or 'no Rev 5 mapping'}")
+            response.append(f"- **Check:** {' '.join(rule['check'].split())}")
+            response.append(f"- **Fix:** {' '.join(rule['fix'].split())}")
             return "\n".join(response)
 
         reverse_match = re.search(r"(?:list|show)?\s*cci\s*mappings\s*for\s*(\w{2}-\d+(?:\s*[a-z])?(?:\([a-z0-9]+\))?)", original_lower)
@@ -288,32 +319,12 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
             return "\n".join(response)
 
         # === TECH KEYWORD DETECTION ===
-        doc = nlp(original_lower)
         tech_keywords = []
-        tech_patterns = {
-            'windows': ['windows', 'microsoft', 'win', 'ms', 'windows 10', 'windows server'],
-            'linux': ['linux', 'ubuntu', 'red hat', 'rhel', 'centos', 'suse', 'almalinux', 'redhat'],
-            'ios': ['ios', 'ipad', 'apple', 'macos'],
-            'android': ['android', 'google', 'samsung', 'pixel'],
-            'vmware': ['vmware', 'esxi', 'vsphere'],
-            'solaris': ['solaris', 'sun'],
-            'splunk': ['splunk'],
-            'tippingpoint': ['tippingpoint', 'trend micro'],
-        }
-        for token in doc:
-            t = token.text.lower()
-            for tech, pats in tech_patterns.items():
-                if any(p in t for p in pats):
-                    tech_keywords.append(tech)
-                    break
-        tech_keywords = list(set(tech_keywords))
+        tech_keywords = detect_technologies(original_lower)
         logging.debug(f"Detected tech keywords: {tech_keywords}")
 
         # === FILTER STIGS ===
-        filtered_stigs = [
-            s for s in available_stigs
-            if any(kw in s['title'].lower() for kw in tech_keywords)
-        ] if tech_keywords else available_stigs
+        filtered_stigs = filter_stigs(available_stigs, tech_keywords)
 
         tech_to_stig = {i + 1: s for i, s in enumerate(filtered_stigs)}
         unique_techs = list(tech_to_stig.keys())
@@ -348,7 +359,8 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
 
     for control_id in control_ids:
         # === CASE-INSENSITIVE LOOKUP ===
-        ctrl_key = next((k for k in control_details.keys() if k.lower() == control_id.lower()), None)
+        ctrl_key = control_id if control_id in control_details else normalize_control_id(control_id)
+        ctrl_key = ctrl_key if ctrl_key in control_details else None
         if not ctrl_key:
             response.append(f"{Fore.YELLOW}1. {control_id}{Style.RESET_ALL}")
             response.append(f"   - Status: Not found in NIST 800-53 Rev 5 catalog.")
@@ -356,8 +368,12 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
 
         ctrl = control_details[ctrl_key]
         response.append(f"{Fore.YELLOW}1. {control_id} - {ctrl['title']}{Style.RESET_ALL}")
-        purpose = ctrl['description'].split('.')[0].lower()
-        response.append(f"   - Purpose: {_wrap(purpose, term_width - 10, '     ')}")
+        if ctrl.get('withdrawn'):
+            response.append(f"   - Status: {ctrl['description']}")
+            continue
+        response.extend(_wrap(_purpose(ctrl), term_width - 10, "   - Purpose: ").splitlines())
+        if ctrl.get('baseline_levels'):
+            response.append(f"   - Baselines: {', '.join(ctrl['baseline_levels'])}")
 
         if is_assessment_query:
             response.append(f"{Fore.CYAN}   Assessment Steps:{Style.RESET_ALL}")
@@ -373,13 +389,11 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
 
         elif is_implement_query:
             response.append(f"{Fore.CYAN}   Implementation Guidance:{Style.RESET_ALL}")
-            guidance = [doc.split(': ', 1)[1] for doc in retrieved_docs if control_id in doc and "Assessment" not in doc]
-            if guidance:
-                for i, g in enumerate(guidance, 1):
-                    wrapped = _wrap(g, term_width - 10, f"     {i}. ")
-                    response.extend(wrapped.splitlines())
-            else:
-                response.append(f"     1. Follow the control description to enforce this requirement.")
+            for line in ctrl['description'].splitlines():
+                response.extend(_wrap(line.strip(), term_width - 10, "     " + "  " * ((len(line) - len(line.lstrip())) // 2)).splitlines())
+            if ctrl.get('guidance'):
+                response.append(f"{Fore.CYAN}   Supplemental Guidance:{Style.RESET_ALL}")
+                response.extend(_wrap(ctrl['guidance'], term_width - 10, "     ").splitlines())
 
         # === STIG TABLE ===
         if selected_techs:
@@ -387,14 +401,14 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 recs = all_stig_recommendations.get(tech, {}).get(ctrl_key, [])
                 if recs:
                     response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL}")
-                    response.append(_format_stig_table(recs, term_width))
+                    response.append(_format_stig_table(recs, term_width, assessing=is_assessment_query))
                 else:
                     response.append(f"{Fore.CYAN}   STIG Guidance for {tech}:{Style.RESET_ALL} No specific guidance.")
         else:
             response.append(f"{Fore.YELLOW}No matching STIGs found for your query.{Style.RESET_ALL}")
 
         if generate_checklist:
-            steps = extract_actionable_steps(ctrl['description'])
+            steps = assessment_procedures.get(ctrl_key) or extract_actionable_steps(ctrl['description'])
             stig_recs = {
                 tech: {ctrl_key: all_stig_recommendations.get(tech, {}).get(ctrl_key, [])}
                 for tech in selected_techs
