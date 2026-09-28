@@ -1,0 +1,258 @@
+{
+ "platform": {
+  "name": "redhat",
+  "release": "9.4",
+  "target_id": "secret-host.example"
+ },
+ "version": "5.22.0",
+ "statistics": {
+  "duration": 1.0
+ },
+ "passthrough": {
+  "checklist": {
+   "asset": {
+    "hostname": "secret-host.example",
+    "hostip": "10.2.3.4"
+   }
+  }
+ },
+ "profiles": [
+  {
+   "name": "redhat-enterprise-linux-9-stig-baseline",
+   "version": "2.3.0",
+   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+   "supports": [],
+   "attributes": [],
+   "groups": [],
+   "status": "loaded",
+   "controls": [
+    {
+     "id": "V-258054",
+     "title": "synthetic V-258054",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-258054",
+      "rid": "SV-258054r958736_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "passed",
+       "code_desc": "SECRET_CODE_DESC passed",
+       "start_time": "2026-01-01T00:00:00Z"
+      }
+     ]
+    },
+    {
+     "id": "V-257779",
+     "title": "synthetic V-257779",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257779",
+      "rid": "SV-257779r925324_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "passed",
+       "code_desc": "SECRET_CODE_DESC passed",
+       "start_time": "2026-01-01T00:00:00Z"
+      },
+      {
+       "status": "failed",
+       "code_desc": "SECRET_CODE_DESC failed",
+       "message": "expected 3 got 10.2.3.4"
+      }
+     ]
+    },
+    {
+     "id": "V-257777",
+     "title": "synthetic V-257777",
+     "impact": 0.0,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257777",
+      "rid": "SV-257777r991589_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "skipped",
+       "code_desc": "skipped",
+       "skip_message": "needs manual review"
+      }
+     ]
+    },
+    {
+     "id": "V-257782",
+     "title": "synthetic V-257782",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257782",
+      "rid": "SV-257782r991589_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [],
+     "waiver_data": {
+      "skipped_due_to_waiver": true,
+      "justification": "x",
+      "run": false
+     }
+    },
+    {
+     "id": "V-257784",
+     "title": "synthetic V-257784",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257784",
+      "rid": "SV-257784r1044832_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "skipped",
+       "code_desc": "skipped",
+       "skip_message": "needs manual review"
+      }
+     ]
+    },
+    {
+     "id": "V-257785",
+     "title": "synthetic V-257785",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257785",
+      "rid": "SV-257785r1044833_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "passed",
+       "code_desc": "SECRET_CODE_DESC passed",
+       "start_time": "2026-01-01T00:00:00Z",
+       "backtrace": [
+        "boom"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "V-257786",
+     "title": "synthetic V-257786",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257786",
+      "rid": "SV-257786r1044834_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": []
+    },
+    {
+     "id": "V-257787",
+     "title": "synthetic V-257787",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-257787",
+      "rid": "SV-257787r1044836_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "passed",
+       "code_desc": "SECRET_CODE_DESC passed",
+       "start_time": "2026-01-01T00:00:00Z"
+      },
+      {
+       "status": "skipped",
+       "code_desc": "skipped",
+       "skip_message": "needs manual review"
+      }
+     ],
+     "attestation_data": {
+      "status": "passed",
+      "explanation": "x"
+     }
+    },
+    {
+     "id": "V-999999",
+     "title": "synthetic V-999999",
+     "impact": 0.5,
+     "desc": "",
+     "descriptions": [],
+     "refs": [],
+     "code": "",
+     "source_location": {},
+     "tags": {
+      "gid": "V-999999",
+      "rid": "SV-999999r1_rule",
+      "severity": "medium",
+      "cci": [],
+      "nist": []
+     },
+     "results": [
+      {
+       "status": "failed",
+       "code_desc": "SECRET_CODE_DESC failed",
+       "message": "expected 3 got 10.2.3.4"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

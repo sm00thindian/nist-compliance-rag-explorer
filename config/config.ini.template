@@ -7,6 +7,8 @@ low_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/ref
 moderate_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_MODERATE-baseline_profile.json
 high_baseline_url = https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_profile.json
 # DISA CCI list. If the download is blocked, place U_CCI_List.xml in knowledge/.
+# Stale: as of 2026-09 this serves the 2025-01-23 list. Get the current one from
+# https://www.cyber.mil/stigs/downloads ("CCI List") and save it as knowledge/U_CCI_List.xml.
 cci_url = https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip
 # Fallback when the DISA list is unavailable: MITRE Heimdall's CCI -> NIST table.
 # Mixed Rev 4/Rev 5; targets are reconciled against the Rev 5 catalog at load time.
@@ -14,7 +16,6 @@ cci_fallback_url = https://raw.githubusercontent.com/mitre/heimdall2/master/libs
 nist_800_53_attack_mapping_url = https://center-for-threat-informed-defense.github.io/mappings-explorer/data/nist_800_53/attack-14.1/nist_800_53-rev5/enterprise/nist_800_53-rev5_attack-14.1-enterprise_json.json
 
 # Model configurations
-spacy_model = en_core_web_trf
 embedding_model = all-mpnet-base-v2
 embedding_dimensions = 768
 similarity_metric = cosine

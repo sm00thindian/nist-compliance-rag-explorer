@@ -8,9 +8,10 @@ Local STIG checks: generate from public STIG text, collect evidence, evaluate lo
   python scripts/checks.py review   --stig rhel V-258054 [--approve]
   python scripts/checks.py plan     --stig rhel --out collect.sh          # evidence collection script
   python scripts/checks.py evaluate --stig rhel --evidence ./evidence [--json out.json] [--csv out.csv]
+  python scripts/checks.py import-results --stig rhel --hdf scan.json [--json out.json] [--csv out.csv]
 
 Only `generate` talks to a model, and it only sends published STIG text.
-Evidence is read from a local folder and never sent anywhere.
+Evidence and scan results are read locally and never sent anywhere.
 """
 import argparse
 import csv
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 from checks.engine import evaluate_check  # noqa: E402
 from checks.evidence import EvidenceBundle, collection_script  # noqa: E402
+from checks.hdf import HDFError, import_hdf  # noqa: E402
 from checks.generator import (  # noqa: E402
     SYSTEM_PROMPT, CheckStore, PublicRequirement, build_prompt, generate_check, stale_checks,
 )
@@ -156,6 +158,12 @@ def cmd_evaluate(ctx, tech, store, args):
                     for e in cond["evidence"][:3]:
                         print(f"       {e['source']}:{e['line']}: {e['text']}")
 
+    report_rollup(ctx, tech, results, args,
+                  lambda v: "; ".join(f"[{x['status']}] {x['detail']}" for x in (results.get(v) or {}).get("conditions", [])))
+
+
+def report_rollup(ctx, tech, results, args, detail, extra=None):
+    """Print the 800-53A rollup and write --json / --csv. detail(vuln_id) gives the CSV Detail column."""
     report = rollup(tech, results, ctx)
     totals = {}
     for c in report:
@@ -170,7 +178,7 @@ def cmd_evaluate(ctx, tech, store, args):
 
     if args.json:
         with open(args.json, "w") as f:
-            json.dump({"technology": tech, "results": results, "statements": report}, f, indent=2)
+            json.dump({"technology": tech, "results": results, "statements": report, **(extra or {})}, f, indent=2)
         print(f"Wrote {args.json}")
     if args.csv:
         with open(args.csv, "w", newline="") as f:
@@ -181,10 +189,39 @@ def cmd_evaluate(ctx, tech, store, args):
                     if not s["rules"]:
                         w.writerow([c["control"], s["label"], s["status"], "", "", "Examine/Interview"])
                     for v, st in s["rules"].items():
-                        detail = "; ".join(f"[{x['status']}] {x['detail']}"
-                                           for x in (results.get(v) or {}).get("conditions", []))
-                        w.writerow([c["control"], s["label"], s["status"], v, st, detail])
+                        w.writerow([c["control"], s["label"], s["status"], v, st, detail(v)])
         print(f"Wrote {args.csv}")
+
+
+def cmd_import_results(ctx, tech, store, args):
+    try:
+        imported = import_hdf(args.hdf, ctx["rules"][tech], keep_details=True)
+    except HDFError as e:
+        sys.exit(str(e))
+    results = imported["results"]
+    names = ", ".join(f"{p['name']} {p['version']}".strip() for p in imported["profiles"])
+    print(f"{tech}: {len(results)} results imported from {os.path.basename(args.hdf)} ({names}): "
+          + ", ".join(f"{k} {v}" for k, v in sorted(imported["counts"].items())))
+    if imported["rid_mismatches"]:
+        print(f"  {len(imported['rid_mismatches'])} results were run against a different rule revision than the "
+              f"loaded STIG ({', '.join(m['vuln_id'] for m in imported['rid_mismatches'][:8])}"
+              f"{', ...' if len(imported['rid_mismatches']) > 8 else ''}). Check the profile matches the STIG release.")
+    if imported["not_in_stig"]:
+        print(f"  {len(imported['not_in_stig'])} results are for rules not in the loaded STIG and were skipped: "
+              + ", ".join(imported["not_in_stig"][:8]))
+    if imported["attested"]:
+        print(f"  {len(imported['attested'])} controls carry attestations, which are not applied: "
+              + ", ".join(imported["attested"][:8]))
+    missing = len(ctx["rules"][tech]) - len(results)
+    if missing:
+        print(f"  {missing} STIG rules have no result in this file.")
+    for v in sorted(imported["failures"]):
+        print(f"  FAIL {v}")
+    failures = imported["failures"]
+    report_rollup(ctx, tech, results, args,
+                  lambda v: ("rid mismatch; " if (results.get(v) or {}).get("rid_mismatch") else "")
+                  + "; ".join(failures.get(v, [])),
+                  extra={"rid_mismatches": imported["rid_mismatches"], "not_in_stig": imported["not_in_stig"]})
 
 
 def main():
@@ -193,7 +230,7 @@ def main():
     ap.add_argument("--stigs", default="stigs")
     ap.add_argument("--checks", default="checks", help="folder for generated checks")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("status", "generate", "review", "plan", "evaluate"):
+    for name in ("status", "generate", "review", "plan", "evaluate", "import-results"):
         p = sub.add_parser(name)
         p.add_argument("--stig", required=True, help="e.g. rhel, windows")
         if name == "generate":
@@ -210,6 +247,9 @@ def main():
             p.add_argument("--out")
         if name == "evaluate":
             p.add_argument("--evidence", required=True)
+        if name == "import-results":
+            p.add_argument("--hdf", required=True, help="CINC Auditor / InSpec JSON or HDF results file")
+        if name in ("evaluate", "import-results"):
             p.add_argument("--json")
             p.add_argument("--csv")
     args = ap.parse_args()
@@ -217,7 +257,7 @@ def main():
     tech = pick_stig(ctx, args.stig)
     store = CheckStore(args.checks)
     {"status": cmd_status, "generate": cmd_generate, "review": cmd_review, "plan": cmd_plan,
-     "evaluate": cmd_evaluate}[args.cmd](ctx, tech, store, args)
+     "evaluate": cmd_evaluate, "import-results": cmd_import_results}[args.cmd](ctx, tech, store, args)
 
 
 if __name__ == "__main__":

@@ -152,6 +152,43 @@ def test_gaps_are_the_uncovered_statements(explorer):
     assert explorer.list_gaps("rhel", limit=500)["total"] == total - covered
 
 
+FIXTURE_HDF = os.path.join(ROOT, "test", "fixtures", "hdf_rhel9_sample.json")
+
+
+def rollup_for(explorer):
+    from checks.hdf import import_hdf, rollup_summary
+    from checks.rollup import rollup
+    tech = "Red Hat Enterprise Linux 9"
+    imported = import_hdf(FIXTURE_HDF, explorer.ctx["rules"][tech])
+    return {"stig": tech, "summary": rollup_summary(rollup(tech, imported["results"], explorer.ctx), imported)}
+
+
+@real
+def test_rollup_tool_is_off_by_default(explorer, monkeypatch):
+    monkeypatch.delenv("ALLOW_ROLLUP_TO_LLM", raising=False)
+    names = {t.name for t in asyncio.run(build_server(explorer, rollup_for(explorer)).list_tools())}
+    assert names == EXPECTED_TOOLS
+    monkeypatch.setenv("ALLOW_ROLLUP_TO_LLM", "0")
+    names = {t.name for t in asyncio.run(build_server(explorer, rollup_for(explorer)).list_tools())}
+    assert "results_rollup" not in names
+
+
+@real
+def test_rollup_tool_when_allowed_returns_statuses_only(explorer, monkeypatch):
+    monkeypatch.setenv("ALLOW_ROLLUP_TO_LLM", "1")
+    server = build_server(explorer, rollup_for(explorer))
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+    assert tools["results_rollup"].annotations.read_only_hint
+    result = asyncio.run(server.call_tool("results_rollup", {"control": "AC-7"}))
+    text = result.content[0].text
+    data = json.loads(text)
+    assert [c["control"] for c in data["controls"]] == ["AC-7"]
+    assert data["controls"][0]["statements"][0]["rules"]["V-258054"] == "pass"
+    assert not any(s in text for s in ("secret-host.example", "10.2.3.4", "SECRET_CODE_DESC"))
+    failing = json.loads(asyncio.run(server.call_tool("results_rollup", {"status": "fail"})).content[0].text)
+    assert failing["controls"] and all(s["status"] == "fail" for c in failing["controls"] for s in c["statements"])
+
+
 @real
 def test_end_to_end_through_mcp(explorer):
     result = asyncio.run(build_server(explorer).call_tool("statement_coverage", {"control": "AU-3 a", "stig": "rhel"}))

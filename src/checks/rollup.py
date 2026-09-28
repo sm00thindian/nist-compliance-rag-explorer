@@ -6,7 +6,10 @@ Statuses per statement:
   pass        every linked STIG rule was checked and passed
   partial     some linked rules passed; others have no check yet, need manual review, or lack evidence
   unchecked   linked rules exist but none was evaluated
+  not_applicable  every linked rule is not applicable (impact 0 or waived in scan results)
   no_stig     no STIG rule provides evidence; use Examine/Interview
+
+Not-applicable rules are left out of the other statuses: pass + not_applicable is pass.
 """
 import json
 import os
@@ -83,8 +86,12 @@ def rollup(technology: str, results: Dict[str, dict], ctx: dict) -> List[dict]:
         for obj in link["objectives"]:
             vulns = list(dict.fromkeys(r["vuln_id"] for r in obj["rules"]))
             per_rule = {v: (results.get(v) or {}).get("status", "no_check") for v in vulns}
-            status = _statement_status([per_rule[v] if per_rule[v] in ("pass", "fail") else None for v in vulns]
-                                       if vulns else [])
+            applicable = [v for v in vulns if per_rule[v] != "not_applicable"]
+            if vulns and not applicable:
+                status = "not_applicable"
+            else:
+                status = _statement_status([per_rule[v] if per_rule[v] in ("pass", "fail") else None
+                                            for v in applicable])
             statements.append({"label": obj["label"], "text": obj["text"], "status": status, "rules": per_rule})
         out.append({"control": cid, "title": ctx["controls"].get(cid, {}).get("title", ""), "statements": statements})
     return out

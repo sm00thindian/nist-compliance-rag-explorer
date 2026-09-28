@@ -7,15 +7,23 @@ which STIG rules are evidence for which statements. Everything served is
 public source text. There are no tools for scan results, evidence or checks,
 no tool accepts a file path, and the server holds no credentials.
 
+One optional tool, results_rollup, reports rolled-up scan status (800-53A
+statement and STIG rule statuses, IDs only). It exists only when the operator
+starts the server with a results file *and* sets ALLOW_ROLLUP_TO_LLM=1; raw
+results (test descriptions, messages, hostnames) are never returned.
+
     python scripts/mcp_server.py [--knowledge knowledge] [--stigs stigs]
+    ALLOW_ROLLUP_TO_LLM=1 python scripts/mcp_server.py --results scan.json --results-stig rhel
 """
 import functools
+import os
 from typing import Optional
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from checks.hdf import rollup_summary
 from mcp_server.data import Explorer
 
 INSTRUCTIONS = """\
@@ -29,7 +37,14 @@ to scan results or system evidence."""
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 
-def build_server(explorer: Explorer) -> MCPServer:
+def rollup_allowed() -> bool:
+    """The rollup tool is off unless ALLOW_ROLLUP_TO_LLM is explicitly set to a true value."""
+    return os.getenv("ALLOW_ROLLUP_TO_LLM", "").strip().lower() in ("1", "true", "yes")
+
+
+def build_server(explorer: Explorer, rollup: Optional[dict] = None) -> MCPServer:
+    """rollup: {"stig", "summary"} from checks.hdf.rollup_summary. The tool is registered only if
+    it is given and ALLOW_ROLLUP_TO_LLM is set."""
     server = MCPServer("nist-compliance-explorer", instructions=INSTRUCTIONS)
 
     def tool(fn):
@@ -102,5 +117,24 @@ def build_server(explorer: Explorer) -> MCPServer:
         """Determination statements, in controls a STIG touches, that no STIG rule provides evidence
         for. With a baseline, also lists baseline controls the STIG does not touch."""
         return explorer.list_gaps(stig, baseline, family, limit)
+
+    if rollup is not None and rollup_allowed():
+        summary = rollup["summary"]
+
+        @tool
+        def results_rollup(control: Optional[str] = None, status: Optional[str] = None) -> dict:
+            """Rolled-up status of the scan results the operator loaded: per 800-53A determination
+            statement (fail, pass, partial, unchecked, not_applicable, no_stig) with the STIG rule
+            statuses behind it. IDs and statuses only. Filter by control (e.g. AC-8) or status."""
+            cid = explorer._control(control)["control_id"] if control else None
+            controls = []
+            for c in summary["controls"]:
+                if cid and c["control"] != cid:
+                    continue
+                statements = [s for s in c["statements"] if not status or s["status"] == status.lower()]
+                if statements:
+                    controls.append(dict(c, statements=statements))
+            return {"stig": rollup["stig"], **{k: v for k, v in summary.items() if k != "controls"},
+                    "controls": controls}
 
     return server
