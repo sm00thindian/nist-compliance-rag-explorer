@@ -28,7 +28,7 @@ The NIST Compliance RAG Explorer is a Python-based tool that leverages Retrieval
 This script will:
 
 Create a virtual environment (venv) using Python 3.12.
-Install dependencies from requirements.txt (including spacy==3.7.2 and the en_core_web_sm model).
+Install dependencies from requirements.txt.
 Download the CCI XML mapping file (U_CCI_List.xml).
 Prompt you to select a Sentence Transformer model (e.g., all-mpnet-base-v2).
 Launch the interactive demo (src/main.py).
@@ -184,7 +184,6 @@ tqdm
 pandas
 openpyxl
 colorama
-spacy==3.7.2
 ```
 # Project Structure
 

@@ -77,7 +77,7 @@ def install_requirements():
         sys.exit(1)
 
     print("Installing dependencies...")
-    print("  Step 1/3: Upgrading pip...", end=" ", flush=True)
+    print("  Step 1/2: Upgrading pip...", end=" ", flush=True)
     subprocess.run([python_cmd, "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     print("complete")
 
@@ -89,7 +89,7 @@ def install_requirements():
         def tqdm_lib(iterable, **kwargs):
             return iterable
 
-    print("  Step 2/3: Installing requirements...", flush=True)
+    print("  Step 2/2: Installing requirements...", flush=True)
     
     requirements = []
     with open("requirements.txt", "r") as f:
@@ -109,24 +109,6 @@ def install_requirements():
             print(result.stderr.strip())
             sys.exit(1)
 
-    print("  Step 3/3: Installing spaCy model...", end=" ", flush=True)
-    config = configparser.ConfigParser()
-    config.read('config/config.ini')
-    spacy_model = config.get('DEFAULT', 'spacy_model', fallback='en_core_web_trf')
-
-    check_cmd = [python_cmd, "-m", "spacy", "validate"]
-    check_result = subprocess.run(check_cmd, capture_output=True, text=True)
-    if spacy_model in check_result.stdout:
-        print(f"Model '{spacy_model}' already installed")
-    else:
-        print("\n   Downloading...")
-        download_cmd = [python_cmd, "-m", "spacy", "download", spacy_model]
-        result = subprocess.run(download_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"Failed. Falling back to en_core_web_trf...")
-            subprocess.run([python_cmd, "-m", "spacy", "download", "en_core_web_trf", "--force"], check=True)
-        else:
-            print(f"Downloaded '{spacy_model}'")
     print("complete")
 
 
