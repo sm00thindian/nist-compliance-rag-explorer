@@ -18,3 +18,4 @@ anthropic
 pytest
 pytest-asyncio
 httpx
+mcp>=2.2,<3

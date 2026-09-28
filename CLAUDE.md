@@ -40,6 +40,10 @@ systems (configs, scan results, hostnames) as sensitive.
 - `checks/<technology>/<Vuln-ID>.json`: stored checks (4 hand-written RHEL 9
   examples, reviewed).
 - `src/main.py`, `src/response_generator.py`: interactive CLI.
+- `src/mcp_server/`: read-only MCP server (stdio). `data.Explorer` is the whole
+  query surface (public data only, no paths, no results); `server.py` wraps it
+  with the `mcp` 2.x SDK (`MCPServer`, not the 1.x `FastMCP`).
+- `scripts/mcp_server.py`: entry point.
 - `src/api/`: FastAPI evidence-evaluation proof of concept (older, gated).
 - `stigs/`: bundled Windows 10 and RHEL 9 XCCDF files.
 
@@ -68,11 +72,12 @@ bundled STIGs maps; RHEL 9 covers 139/179 statements, Windows 10 77/117.
 ## Commands
 
 ```
-pytest test/test_parsers.py test/test_checks.py    # 88 tests; real-data tests skip without knowledge/
+pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py   # 99 tests; real-data tests skip without knowledge/
 python scripts/validate_data.py [--cci path/to/U_CCI_List.xml]
 python scripts/checks.py status --stig rhel
 python scripts/checks.py generate --stig rhel --control AC-7 --dry-run   # shows the exact prompt
 python scripts/checks.py evaluate --stig rhel --evidence ./evidence --csv out.csv
+python scripts/mcp_server.py            # stdio; claude mcp add nist-explorer -- <venv python> scripts/mcp_server.py
 ```
 
 LLM provider: `LLM_PROVIDER=anthropic|bedrock|openai|xai` with
@@ -103,7 +108,7 @@ endpoints only; no live call has been made yet.
 
 ## Roadmap (agreed direction)
 
-1. **Read-only MCP server** over public data: control text/params/baselines,
+1. **Read-only MCP server** over public data (first version done; 10 tools): control text/params/baselines,
    800-53A statements and methods, STIG rules, CCI mappings, profile-to-statement
    coverage, gap listing. No results, no credentials.
 2. **Results importer** for CINC/InSpec JSON (HDF). Map controls by `gid` tag,

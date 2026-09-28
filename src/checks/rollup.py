@@ -50,6 +50,7 @@ def load_context(knowledge_dir: str = "knowledge", stig_folder: str = "stigs") -
         "assessment": extract_assessment_details(catalog_json),
         "cci_to_nist": cci_to_nist,
         "cci_parts": report["parts"],
+        "cci_report": report,
         "cci_source": source,
         "recommendations": recs,
         "stigs": stigs,
