@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "rule": "V-258054",
+  "stig_id": "RHEL-09-411075",
+  "title": "RHEL 9 must automatically lock an account when three unsuccessful logon attempts occur.",
+  "technology": "Red Hat Enterprise Linux 9",
+  "source_sha256": "4e31332c5c31d922dffa95ea6129cba00a6c16c740401a0e5b9c120d3eb68357",
+  "automatable": true,
+  "logic": "all",
+  "conditions": [
+    {
+      "type": "setting",
+      "path": "/etc/security/faillock.conf",
+      "key": "deny",
+      "separator": "=",
+      "op": "le",
+      "value": 3
+    },
+    {
+      "type": "setting",
+      "path": "/etc/security/faillock.conf",
+      "key": "deny",
+      "separator": "=",
+      "op": "ne",
+      "value": 0
+    }
+  ],
+  "notes": "deny must be set, at most 3, and not 0; missing or commented out fails.",
+  "manual_reason": null,
+  "generated_by": "hand-written",
+  "reviewed": true
+}

@@ -101,6 +101,29 @@ Example output for `How do I assess CM-6 on RHEL?` (abridged):
 
 Rules whose CCI names a whole control are matched to statements that assess the whole control, or to a control's only statement; otherwise they are reported as control-level evidence rather than guessed.
 
+## Local STIG checks (evidence stays on your machine)
+
+`scripts/checks.py` checks a system against STIG rules without sending its configuration anywhere:
+
+1. **Generate** structured checks from the published STIG check text. This is the only step that calls an LLM, and it sends only public STIG content (title, check text, fix text). `--dry-run` prints exactly what would be sent.
+2. **Review** each generated check next to the STIG text and approve it. Reviewed checks are never overwritten.
+3. **Plan**: write a shell script that copies the needed config files and saves the needed command output. Read it, then run it on the target.
+4. **Evaluate** locally: every check passes, fails, or is marked not evaluated or manual, with the exact file line or command output that decided it. Results roll up to 800-53A determination statements.
+
+```
+python scripts/checks.py generate --stig rhel --control AC-7            # or --rules V-258054,...
+python scripts/checks.py review   --stig rhel V-258054 --approve
+python scripts/checks.py plan     --stig rhel --out collect.sh
+sh collect.sh evidence                                                  # on the target system
+python scripts/checks.py evaluate --stig rhel --evidence ./evidence --csv results.csv
+```
+
+Checks live in `checks/<technology>/<Vuln-ID>.json` so they can be reviewed and committed. Four hand-written, reviewed RHEL 9 checks are included as examples (V-258054, V-257987, V-258151, V-258152). A check built from older STIG text is reported as stale by `status`.
+
+**Model provider** is set by `LLM_PROVIDER`: `anthropic` (`ANTHROPIC_MODEL`, default `claude-sonnet-5`), `bedrock` (Claude on AWS Bedrock, e.g. GovCloud; `BEDROCK_MODEL_ID`, `AWS_REGION`), `openai` (`OPENAI_MODEL`), or `xai` for Grok (`XAI_MODEL`). Which provider is authorized for your data is a policy decision; this workflow only sends public STIG text.
+
+**The evidence API** (`src/api`) no longer sends submitted evidence to an external model unless `ALLOW_EVIDENCE_TO_LLM=true` is set.
+
 ## Testing
 
 The project includes automated tests to verify functionality. All tests should be run within the virtual environment to ensure proper dependency isolation.

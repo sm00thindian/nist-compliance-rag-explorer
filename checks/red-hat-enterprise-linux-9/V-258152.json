@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "rule": "V-258152",
+  "stig_id": "RHEL-09-653015",
+  "title": "RHEL 9 audit service must be enabled.",
+  "technology": "Red Hat Enterprise Linux 9",
+  "source_sha256": "57d035ff22f599061c866d5d1fb5bd8eba8b14b9cfef2025c9909d50a9b14dd4",
+  "automatable": true,
+  "logic": "all",
+  "conditions": [
+    {
+      "type": "command",
+      "command": "systemctl status auditd.service",
+      "pattern": "^\\s*Active:\\s*active \\(running\\)",
+      "expect": "present"
+    }
+  ],
+  "notes": "auditd is active and running.",
+  "manual_reason": null,
+  "generated_by": "hand-written",
+  "reviewed": true
+}

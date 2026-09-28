@@ -25,15 +25,20 @@ class EvidenceEvaluator:
 
     def __init__(self):
         self.config = get_config()
-        self.llm_provider = os.getenv('LLM_PROVIDER', 'openai')  # 'openai' or 'anthropic'
+        self.llm_provider = os.getenv('LLM_PROVIDER', 'anthropic')  # 'openai' or 'anthropic'
+        # Submitted evidence (configs, logs) is sent to an external model only when this is
+        # explicitly enabled. Prefer scripts/checks.py, which evaluates evidence locally.
+        self.allow_evidence_to_llm = os.getenv('ALLOW_EVIDENCE_TO_LLM', 'false').lower() == 'true'
+        if not self.allow_evidence_to_llm:
+            logger.info("ALLOW_EVIDENCE_TO_LLM is not 'true': evidence will not be sent to an external model")
 
         # Initialize LLM clients
         if self.llm_provider == 'openai':
             self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-            self.model = os.getenv('OPENAI_MODEL', 'gpt-4-turbo-preview')
+            self.model = os.getenv('OPENAI_MODEL')
         elif self.llm_provider == 'anthropic':
             self.anthropic_client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-            self.model = os.getenv('ANTHROPIC_MODEL', 'claude-3-sonnet-20240229')
+            self.model = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-5')
 
         # Load control data
         self._load_control_data()
@@ -126,6 +131,12 @@ class EvidenceEvaluator:
 
     def _evaluate_with_llm(self, control_requirements: str, evidence_content: str) -> Dict[str, Any]:
         """Use LLM to evaluate evidence against requirements"""
+        if not self.allow_evidence_to_llm:
+            result = self._fallback_evaluation(control_requirements, evidence_content)
+            result["findings"][0]["explanation"] = (
+                "Evidence was not sent to an external model (ALLOW_EVIDENCE_TO_LLM is not 'true'). "
+                "Evaluate it locally with scripts/checks.py, or enable the flag if policy allows.")
+            return result
 
         prompt = f"""
 You are an expert compliance assessor evaluating evidence against NIST 800-53 control requirements.

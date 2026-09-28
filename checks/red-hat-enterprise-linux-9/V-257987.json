@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "rule": "V-257987",
+  "stig_id": "RHEL-09-255055",
+  "title": "RHEL 9 SSH daemon must be configured to use system-wide crypto policies.",
+  "technology": "Red Hat Enterprise Linux 9",
+  "source_sha256": "6b1a864b52d5c15d227746395806819624a791b75772e56a70bf9823a5c8107b",
+  "automatable": true,
+  "logic": "all",
+  "conditions": [
+    {
+      "type": "line",
+      "path": "/etc/ssh/sshd_config",
+      "pattern": "^\\s*Include\\s+/etc/ssh/sshd_config\\.d/\\*\\.conf\\s*$",
+      "expect": "present"
+    },
+    {
+      "type": "file_exists",
+      "path": "/etc/ssh/sshd_config.d/50-redhat.conf",
+      "expect": "present"
+    },
+    {
+      "type": "line",
+      "path": "/etc/ssh/sshd_config.d/50-redhat.conf",
+      "pattern": "^\\s*Include\\s+/etc/crypto-policies/back-ends/opensshserver\\.config\\s*$",
+      "expect": "present"
+    }
+  ],
+  "notes": "sshd_config includes sshd_config.d/*.conf, and 50-redhat.conf exists and includes the system crypto policy.",
+  "manual_reason": null,
+  "generated_by": "hand-written",
+  "reviewed": true
+}
