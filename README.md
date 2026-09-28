@@ -75,27 +75,31 @@ After setup, the CLI starts automatically. Example queries:
 - Assessment: `How do I assess AU-3 on RHEL?`
 - CCI lookup: `What is CCI-000130?` / `list cci mappings for CM-6`
 - STIG rule lookup: `What is V-257987?`
+- 800-53A coverage from a STIG: `coverage for RHEL`
 - List STIGs: `list stigs`
 - Exit: `exit`
 
-Example output for `How do I assess AU-3 on RHEL?`:
+### Assessment answers are tied to 800-53A determination statements
+
+Each CCI names the part of a control it covers (`AU-3 a`), and each 800-53A objective names the part it assesses (`AU-03a`), so STIG rules are attached to the specific determination statements they provide evidence for. Statements with no STIG evidence are the ones that need document review or interviews.
+
+Example output for `How do I assess CM-6 on RHEL?` (abridged):
 
 ```
-### Assessing AU-3
-Based on NIST 800-53 Rev 5 and STIGs for: Red Hat Enterprise Linux 9
-
-1. AU-3 - Content of Audit Records
-   - Purpose: Ensure that audit records contain information that establishes the following:
-   - Baselines: LOW, MODERATE, HIGH
-   Assessment Steps:
-     1. AU-03a. Determine if audit records contain information that establishes what type of event occurred;
+   800-53A determination statements and STIG evidence:
+     1. CM-06a. Determine if configuration settings ... are established and documented ...
+        Evidence, Red Hat Enterprise Linux 9: no STIG evidence; use Examine/Interview
+     2. CM-06b. Determine if the configuration settings documented in CM-06a are implemented;
+        Evidence, Red Hat Enterprise Linux 9: 149 rules (V-257777, V-257778, V-257781, V-257782, +145)
+     3. CM-06c.[01] Determine if any deviations from established configuration settings ... are identified and documented ...
+        Evidence, Red Hat Enterprise Linux 9: no STIG evidence; use Examine/Interview
      ...
-     7. Examine: Audit and accountability policy; system security plan; privacy plan; ...
-     8. Interview: Organizational personnel with audit and accountability responsibilities; ...
-     9. Test: Mechanisms implementing system auditing of auditable events
-   STIG Guidance for Red Hat Enterprise Linux 9:
-   (rules mapped to AU-3 through their CCIs, with the STIG check text)
+   - STIG coverage, Red Hat Enterprise Linux 9: 1 of 6 statements
 ```
+
+`coverage for RHEL` summarizes this for every control the STIG touches (with the bundled STIGs: RHEL 9 covers 139 of 179 statements in the 82 controls it touches; Windows 10, 77 of 117 in 45 controls). Generated checklists get one row per determination statement, listing the STIG rules that provide evidence for it.
+
+Rules whose CCI names a whole control are matched to statements that assess the whole control, or to a control's only statement; otherwise they are reported as control-level evidence rather than guessed.
 
 ## Testing
 

@@ -19,6 +19,9 @@ from parsers import (
     apply_baselines,
     load_cci_mapping,
     load_cci_mapping_from_heimdall,
+    load_cci_parts,
+    load_cci_parts_from_heimdall,
+    extract_assessment_details,
     reconcile_cci_mapping,
     load_stig_data
 )
@@ -152,19 +155,22 @@ def load_knowledge(stig_folder: str) -> dict:
     apply_baselines(control_details, baselines)
 
     assessment_procedures = extract_assessment_procedures(catalog_json)
+    assessment_details = extract_assessment_details(catalog_json)
 
     cci_path = resolve_cci_path()
-    cci_source, raw_cci = "none", {}
+    cci_source, raw_cci, raw_parts = "none", {}, {}
     if cci_path:
         raw_cci = load_cci_mapping(cci_path)
+        raw_parts = load_cci_parts(cci_path)
         cci_source = f"DISA CCI list ({cci_path})"
         if not raw_cci:
             print(f"{Fore.YELLOW}Warning: {cci_path} has no NIST SP 800-53 Rev 5 references "
                   f"(it predates DISA's Rev 5 mappings).{Style.RESET_ALL}")
     if not raw_cci and os.path.exists(CCI_HEIMDALL):
         raw_cci = load_cci_mapping_from_heimdall(CCI_HEIMDALL)
+        raw_parts = load_cci_parts_from_heimdall(CCI_HEIMDALL)
         cci_source = f"MITRE Heimdall fallback ({CCI_HEIMDALL})"
-    cci_to_nist, cci_report = reconcile_cci_mapping(raw_cci, control_details)
+    cci_to_nist, cci_report = reconcile_cci_mapping(raw_cci, control_details, raw_parts)
     all_stig_recommendations, available_stigs = load_stig_data(stig_folder, cci_to_nist)
 
     summary = {
@@ -187,6 +193,8 @@ def load_knowledge(stig_folder: str) -> dict:
         'assessment_procedures': assessment_procedures,
         'cci_to_nist': cci_to_nist,
         'cci_report': cci_report,
+        'cci_parts': cci_report['parts'],
+        'assessment_details': assessment_details,
         'all_stig_recommendations': all_stig_recommendations,
         'available_stigs': available_stigs,
         'summary': summary,
@@ -301,7 +309,8 @@ def main():
             query, retrieved_docs, control_details, high_baseline_controls,
             all_stig_recommendations, available_stigs, assessment_procedures,
             cci_to_nist, generate_checklist=generate_checklist,
-            cci_redirects=kb['cci_report']['redirected']
+            cci_redirects=kb['cci_report']['redirected'],
+            assessment_details=kb['assessment_details'], cci_parts=kb['cci_parts']
         )
 
         # === CLARIFICATION HANDLING ===
@@ -323,7 +332,8 @@ def main():
                 query, retrieved_docs, control_details, high_baseline_controls,
                 all_stig_recommendations, available_stigs, assessment_procedures,
                 cci_to_nist, generate_checklist=generate_checklist,
-                cci_redirects=kb['cci_report']['redirected']
+                cci_redirects=kb['cci_report']['redirected'],
+                assessment_details=kb['assessment_details'], cci_parts=kb['cci_parts']
             )
 
         # === FINAL OUTPUT ===

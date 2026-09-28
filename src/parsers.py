@@ -73,6 +73,27 @@ def normalize_control_id(control_id: str) -> str:
     return parse_control_ref(control_id)[0]
 
 
+def part_key(part: str) -> str:
+    """Canonical key for a statement part, matching OSCAL statement ids.
+
+    >>> part_key("a 1 (a)")
+    'a.1.a'
+    >>> part_key("(c)")
+    'c'
+    >>> part_key("d.01")
+    'd.1'
+    """
+    part = (part or "").split(",", 1)[0].lower()
+    return ".".join(str(int(t)) if t.isdigit() else t for t in re.findall(r"[a-z]+|\d+", part))
+
+
+def parts_overlap(a: str, b: str) -> bool:
+    """True if one statement part contains the other (a == b, or a is a parent of b, or vice versa)."""
+    if not a or not b:
+        return False
+    return a == b or b.startswith(a + ".") or a.startswith(b + ".")
+
+
 def control_family(control_id: str) -> str:
     cid = normalize_control_id(control_id)
     return cid.split("-", 1)[0] if cid else ""
@@ -221,6 +242,7 @@ def extract_controls_from_json(catalog_json: dict) -> List[dict]:
 
         withdrawn = _has_prop_value(ctrl, "status", "withdrawn")
         withdrawn_to, withdrawn_refs, related = [], [], []
+        withdrawn_to_parts: Dict[str, str] = {}
         for link in ctrl.get("links", []) or []:
             target, part = parse_control_ref(link.get("href", "").lstrip("#"))
             if not target:
@@ -228,6 +250,7 @@ def extract_controls_from_json(catalog_json: dict) -> List[dict]:
             if link.get("rel") in ("incorporated-into", "moved-to"):
                 withdrawn_to.append(target)
                 withdrawn_refs.append(f"{target}{part}" if part else target)
+                withdrawn_to_parts.setdefault(target, part_key(part))
             elif link.get("rel") == "related":
                 related.append(target)
         withdrawn_to = sorted(set(withdrawn_to))
@@ -256,6 +279,7 @@ def extract_controls_from_json(catalog_json: dict) -> List[dict]:
             "parent": normalize_control_id(parent["id"]) if parent else "",
             "withdrawn": withdrawn,
             "withdrawn_to": withdrawn_to,
+            "withdrawn_to_parts": withdrawn_to_parts,
             "baseline_levels": [],
         })
     return records
@@ -264,8 +288,12 @@ def extract_controls_from_json(catalog_json: dict) -> List[dict]:
 def extract_assessment_details(catalog_json: dict) -> Dict[str, dict]:
     """Extract SP 800-53A Rev 5 objectives and methods embedded in the OSCAL catalog.
 
-    Returns {control_id: {"objectives": [{"label", "text"}],
+    Returns {control_id: {"objectives": [{"id", "label", "text", "part", "leaf"}],
                           "methods": {"EXAMINE"|"INTERVIEW"|"TEST": [objects]}}}
+
+    "part" is the statement part the objective assesses (from its OSCAL
+    "assessment-for" link, e.g. "d.1" for AC-2 d.1), and "leaf" marks the
+    individual determination statements (objectives with no sub-objectives).
     """
     catalog = _unwrap_catalog(catalog_json)
     params = _index_params(catalog)
@@ -273,11 +301,19 @@ def extract_assessment_details(catalog_json: dict) -> Dict[str, dict]:
 
     def walk_objectives(part, acc):
         prose = _substitute(part.get("prose", ""), params).strip()
+        children = [sub for sub in part.get("parts", []) or [] if sub.get("name") == "assessment-objective"]
         if prose:
-            acc.append({"label": _prop(part, "label", "sp800-53a") or _prop(part, "label"), "text": prose})
-        for sub in part.get("parts", []) or []:
-            if sub.get("name") == "assessment-objective":
-                walk_objectives(sub, acc)
+            target = next((link.get("href", "") for link in part.get("links", []) or []
+                           if link.get("rel") == "assessment-for"), "")
+            acc.append({
+                "id": part.get("id", ""),
+                "label": _prop(part, "label", "sp800-53a") or _prop(part, "label"),
+                "text": prose,
+                "part": part_key(parse_control_ref(target.lstrip("#"))[1]) if target else "",
+                "leaf": not children,
+            })
+        for sub in children:
+            walk_objectives(sub, acc)
 
     for ctrl, _group, _parent in _iter_catalog_controls(catalog):
         control_id = normalize_control_id(ctrl.get("id", ""))
@@ -408,6 +444,19 @@ def load_cci_records(cci_xml_path: str) -> List[dict]:
     return records
 
 
+def load_cci_parts(cci_xml_path: str, revision: str = "5") -> Dict[str, str]:
+    """Map CCI ID -> statement part key (e.g. "a.1") for the given revision; "" for control-level CCIs."""
+    if not os.path.exists(cci_xml_path):
+        return {}
+    parts = {}
+    for rec in load_cci_records(cci_xml_path):
+        for ref in rec["references"]:
+            if ref["version"] == revision and ref["control_id"]:
+                parts[rec["cci_id"]] = part_key(ref["part"])
+                break
+    return parts
+
+
 def load_cci_mapping(cci_xml_path: str, revision: str = "5") -> Dict[str, str]:
     """Map CCI ID -> canonical SP 800-53 control, using the given revision only.
 
@@ -449,7 +498,18 @@ def load_cci_mapping_from_heimdall(path: str) -> Dict[str, str]:
     return mapping
 
 
-def reconcile_cci_mapping(mapping: Dict[str, str], control_details: Dict[str, dict]) -> Tuple[Dict[str, str], dict]:
+def load_cci_parts_from_heimdall(path: str) -> Dict[str, str]:
+    """Map CCI -> statement part key from Heimdall's table; "" for control-level CCIs."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    return {cci: part_key(parse_control_ref(ref)[1]) for cci, ref in _HEIMDALL_ENTRY_RE.findall(text)
+            if normalize_control_id(ref)}
+
+
+def reconcile_cci_mapping(mapping: Dict[str, str], control_details: Dict[str, dict],
+                          parts: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, str], dict]:
     """Make a CCI mapping consistent with the Rev 5 catalog.
 
     - Targets in the catalog and active: kept.
@@ -461,9 +521,13 @@ def reconcile_cci_mapping(mapping: Dict[str, str], control_details: Dict[str, di
 
     Returns (clean_mapping, report). report["redirected"] maps CCI ->
     (original, replacement) so the redirect can be shown to users.
+    If ``parts`` (CCI -> statement part) is given, report["parts"] holds the
+    parts for the clean mapping; redirected CCIs take the part named in the
+    withdrawn control's "incorporated into" link (AC-2(10) -> AC-2 k).
     """
+    parts = parts or {}
     clean: Dict[str, str] = {}
-    report = {"kept": 0, "redirected": {}, "dropped_not_in_rev5": {}, "dropped_ambiguous": {}}
+    report = {"kept": 0, "redirected": {}, "dropped_not_in_rev5": {}, "dropped_ambiguous": {}, "parts": {}}
     for cci, control in mapping.items():
         ctrl = control_details.get(control)
         if ctrl is None:
@@ -471,15 +535,59 @@ def reconcile_cci_mapping(mapping: Dict[str, str], control_details: Dict[str, di
         elif not ctrl.get("withdrawn"):
             clean[cci] = control
             report["kept"] += 1
+            report["parts"][cci] = parts.get(cci, "")
         else:
             targets = [t for t in ctrl.get("withdrawn_to", [])
                        if t in control_details and not control_details[t].get("withdrawn")]
             if len(targets) == 1:
                 clean[cci] = targets[0]
                 report["redirected"][cci] = (control, targets[0])
+                report["parts"][cci] = ctrl.get("withdrawn_to_parts", {}).get(targets[0], "")
             else:
                 report["dropped_ambiguous"][cci] = (control, targets)
     return clean, report
+
+
+# ----------------------------------------------------------------------
+#  800-53A objectives <-> STIG rules
+# ----------------------------------------------------------------------
+def link_objectives_to_rules(control_id: str, rules: List[dict], cci_to_nist: Dict[str, str],
+                             cci_parts: Dict[str, str], assessment: Optional[dict]) -> dict:
+    """Attach STIG rules to the 800-53A determination statements they provide evidence for.
+
+    A rule supports an objective when one of its CCIs maps to this control and
+    the CCI's statement part overlaps the part the objective assesses
+    (AU-3 a -> AU-03a; AC-2 d -> AC-02d.01, AC-02d.02, ...). Objectives that
+    assess the whole statement accept any CCI for the control. Rules whose
+    CCIs name the whole control count for part-specific objectives only when
+    the control has a single determination statement; otherwise they are
+    reported as control-level evidence, since the CCI does not say which part
+    they cover.
+
+    Returns {"objectives": [objective + {"rules": [...]}], "control_level_rules": [...],
+             "covered": int, "total": int}
+    """
+    leaves = [dict(o, rules=[]) for o in (assessment or {}).get("objectives", []) if o.get("leaf")]
+    control_level: List[dict] = []
+    single = len(leaves) == 1
+    for rule in rules:
+        rule_parts = {cci_parts.get(c, "") for c in rule.get("ccis", []) if cci_to_nist.get(c) == control_id}
+        if not rule_parts:
+            continue
+        matched = False
+        for obj in leaves:
+            # An objective that assesses the whole statement (no part) is supported by any CCI for the control.
+            if single or not obj["part"] or any(parts_overlap(p, obj["part"]) for p in rule_parts if p):
+                obj["rules"].append(rule)
+                matched = True
+        if not matched:
+            control_level.append(rule)
+    return {
+        "objectives": leaves,
+        "control_level_rules": control_level,
+        "covered": sum(1 for o in leaves if o["rules"]),
+        "total": len(leaves),
+    }
 
 
 # ----------------------------------------------------------------------

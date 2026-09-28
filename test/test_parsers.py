@@ -24,7 +24,12 @@ from parsers import (  # noqa: E402
     extract_controls_from_json,
     load_cci_mapping,
     load_cci_mapping_from_heimdall,
+    load_cci_parts,
+    load_cci_parts_from_heimdall,
     load_cci_records,
+    link_objectives_to_rules,
+    part_key,
+    parts_overlap,
     reconcile_cci_mapping,
     load_stig_data,
     normalize_control_id,
@@ -59,6 +64,19 @@ def test_normalize_control_id(raw, expected):
     assert normalize_control_id(raw) == expected
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("a", "a"), ("a 1 (a)", "a.1.a"), ("(c)", "c"), ("d.01", "d.1"), ("", ""), (", SC-37 (1)", ""),
+])
+def test_part_key(raw, expected):
+    assert part_key(raw) == expected
+
+
+def test_parts_overlap():
+    assert parts_overlap("d", "d.1") and parts_overlap("d.1", "d") and parts_overlap("a", "a")
+    assert not parts_overlap("a", "b") and not parts_overlap("d.1", "d.2") and not parts_overlap("", "a")
+    assert not parts_overlap("a", "ab")
+
+
 def test_parse_control_ref_keeps_part():
     assert parse_control_ref("AC-2 a.1") == ("AC-2", "a.1")
     assert parse_control_ref("IA-5 (1) (d)") == ("IA-5(1)", "(d)")
@@ -91,6 +109,14 @@ def test_cci_mapping_uses_rev5_only():
     assert "CCI-999999" not in mapping  # Rev 4 only
 
 
+def test_cci_parts_use_rev5_reference():
+    parts = load_cci_parts(CCI_SAMPLE)
+    assert parts["CCI-000048"] == "a"        # AC-8 a
+    assert parts["CCI-000196"] == "d"        # Rev 5 IA-5 (1) (d), not Rev 4's (c)
+    assert parts["CCI-001453"] == ""         # AC-17 (2), whole enhancement
+    assert "CCI-999999" not in parts
+
+
 def test_cci_mapping_missing_file_is_empty():
     assert load_cci_mapping(os.path.join(FIXTURES, "does-not-exist.xml")) == {}
 
@@ -106,7 +132,7 @@ REV5 = {
     "CM-6": {"withdrawn": False},
     "AC-17(2)": {"withdrawn": False},
     "AC-2": {"withdrawn": False},
-    "AC-2(10)": {"withdrawn": True, "withdrawn_to": ["AC-2"]},
+    "AC-2(10)": {"withdrawn": True, "withdrawn_to": ["AC-2"], "withdrawn_to_parts": {"AC-2": "k"}},
     "AC-3(6)": {"withdrawn": True, "withdrawn_to": ["MP-4", "SC-28"]},
     "MP-4": {"withdrawn": False},
     "SC-28": {"withdrawn": False},
@@ -136,10 +162,60 @@ def test_reconcile_redirects_drops_and_keeps():
     assert report["kept"] + len(report["redirected"]) == len(clean)
 
 
+def test_reconcile_carries_statement_parts():
+    path = HEIMDALL_SAMPLE
+    clean, report = reconcile_cci_mapping(load_cci_mapping_from_heimdall(path), REV5, load_cci_parts_from_heimdall(path))
+    assert report["parts"]["CCI-000130"] == "a"       # AU-3 a
+    assert report["parts"]["CCI-005147"] == "a.1"     # AT-2 a 1
+    assert report["parts"]["CCI-001453"] == ""        # AC-17 (2)
+    assert report["parts"]["CCI-002150"] == "k"       # AC-2(10) -> AC-2 k
+    assert set(report["parts"]) == set(clean)
+
+
 def test_reconcile_leaves_clean_rev5_mapping_alone():
     clean, report = reconcile_cci_mapping(load_cci_mapping(CCI_SAMPLE), {**REV5, "AC-8": {"withdrawn": False}})
     assert clean == load_cci_mapping(CCI_SAMPLE)
     assert not report["redirected"] and not report["dropped_ambiguous"] and not report["dropped_not_in_rev5"]
+
+
+# ----------------------------------------------------------------------
+#  800-53A objectives <-> STIG rules
+# ----------------------------------------------------------------------
+def _obj(label, part):
+    return {"id": label, "label": label, "text": label, "part": part, "leaf": True}
+
+
+def _rule(vid, *ccis):
+    return {"vuln_id": vid, "rule_id": f"S{vid}", "ccis": list(ccis)}
+
+
+def test_link_objectives_by_statement_part():
+    assessment = {"objectives": [_obj("X-01a.", "a"), _obj("X-01b.01", "b.1"), _obj("X-01b.02", "b.2"),
+                                 {"id": "top", "label": "X-01", "text": "", "part": "", "leaf": False}]}
+    cci_to_nist = {"CCI-1": "X-1", "CCI-2": "X-1", "CCI-3": "X-1", "CCI-9": "Y-1"}
+    cci_parts = {"CCI-1": "a", "CCI-2": "b", "CCI-3": "", "CCI-9": "a"}
+    rules = [_rule("V-1", "CCI-1"), _rule("V-2", "CCI-2"), _rule("V-3", "CCI-3"), _rule("V-9", "CCI-9")]
+    link = link_objectives_to_rules("X-1", rules, cci_to_nist, cci_parts, assessment)
+    got = {o["label"]: [r["vuln_id"] for r in o["rules"]] for o in link["objectives"]}
+    assert got == {"X-01a.": ["V-1"], "X-01b.01": ["V-2"], "X-01b.02": ["V-2"]}  # b covers b.1 and b.2
+    assert [r["vuln_id"] for r in link["control_level_rules"]] == ["V-3"]       # whole-control CCI, 3 objectives
+    assert (link["covered"], link["total"]) == (3, 3)                           # V-9 maps to another control
+
+
+def test_link_whole_control_cci_counts_for_single_or_whole_statement_objectives():
+    rules = [_rule("V-1", "CCI-1")]
+    m, parts = {"CCI-1": "X-1"}, {"CCI-1": ""}
+    single = link_objectives_to_rules("X-1", rules, m, parts, {"objectives": [_obj("X-01", "")]})
+    assert single["covered"] == 1
+    whole = link_objectives_to_rules("X-1", rules, m, parts,
+                                     {"objectives": [_obj("X-01[01]", ""), _obj("X-01[02]", ""), _obj("X-01a.", "a")]})
+    assert [o["label"] for o in whole["objectives"] if o["rules"]] == ["X-01[01]", "X-01[02]"]
+    assert whole["control_level_rules"] == []
+
+
+def test_link_without_assessment_data_is_empty():
+    link = link_objectives_to_rules("X-1", [_rule("V-1", "CCI-1")], {"CCI-1": "X-1"}, {}, None)
+    assert link == {"objectives": [], "control_level_rules": [_rule("V-1", "CCI-1")], "covered": 0, "total": 0}
 
 
 # ----------------------------------------------------------------------
@@ -195,6 +271,7 @@ MINI_CATALOG = {
                     {"id": "au-2_obj", "name": "assessment-objective", "parts": [
                         {"id": "au-2_obj.a", "name": "assessment-objective",
                          "props": [{"name": "label", "value": "AU-02a.", "class": "sp800-53a"}],
+                         "links": [{"href": "#au-2_smt.a", "rel": "assessment-for"}],
                          "prose": "{{ insert: param, au-2_prm_1 }} are identified;"},
                     ]},
                     {"id": "au-2_asm-examine", "name": "assessment-method",
@@ -229,7 +306,10 @@ def test_catalog_walks_groups_and_enhancements():
 
 def test_assessment_procedures_from_catalog():
     details = extract_assessment_details(MINI_CATALOG)["AU-2"]
-    assert details["objectives"] == [{"label": "AU-02a.", "text": "[Assignment: organization-defined event types] are identified;"}]
+    assert details["objectives"] == [{
+        "id": "au-2_obj.a", "label": "AU-02a.", "part": "a", "leaf": True,
+        "text": "[Assignment: organization-defined event types] are identified;",
+    }]
     assert details["methods"] == {"EXAMINE": ["audit policy", "system security plan"]}
     steps = extract_assessment_procedures(MINI_CATALOG)["AU-2"]
     assert steps[0].startswith("AU-02a. Determine if")
@@ -299,6 +379,23 @@ def test_real_heimdall_fallback_links_every_stig_rule(controls):
     _, stigs = load_stig_data(STIGS, clean)
     for s in stigs:
         assert s["unmapped_rules"] / s["rule_count"] <= 0.05, s
+
+
+@real
+@pytest.mark.skipif(not os.path.exists(HEIMDALL_REAL), reason="Heimdall CCI mapping not downloaded")
+def test_real_objective_evidence(catalog_json, controls):
+    path = HEIMDALL_REAL
+    clean, report = reconcile_cci_mapping(load_cci_mapping_from_heimdall(path), controls, load_cci_parts_from_heimdall(path))
+    recs, _ = load_stig_data(STIGS, clean)
+    rhel = recs["Red Hat Enterprise Linux 9"]
+    details = extract_assessment_details(catalog_json)
+
+    au3 = link_objectives_to_rules("AU-3", rhel["AU-3"], clean, report["parts"], details["AU-3"])
+    assert (au3["covered"], au3["total"]) == (6, 6)
+
+    # STIGs show settings are implemented (CM-6 b), not that they are documented or monitored.
+    cm6 = link_objectives_to_rules("CM-6", rhel["CM-6"], clean, report["parts"], details["CM-6"])
+    assert [o["label"] for o in cm6["objectives"] if o["rules"]] == ["CM-06b."]
 
 
 @real
