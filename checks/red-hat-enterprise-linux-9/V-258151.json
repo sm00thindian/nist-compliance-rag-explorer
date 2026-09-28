@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "rule": "V-258151",
+  "stig_id": "RHEL-09-653010",
+  "title": "RHEL 9 audit package must be installed.",
+  "technology": "Red Hat Enterprise Linux 9",
+  "source_sha256": "48b86387018dccff9607b74bd1be4e28c1e8a46e1b06f01b4f6cd3e162227513",
+  "automatable": true,
+  "logic": "all",
+  "conditions": [
+    {
+      "type": "command",
+      "command": "dnf list --installed audit",
+      "pattern": "^audit[.-]\\d|^audit\\.\\w+\\s",
+      "expect": "present"
+    }
+  ],
+  "notes": "The audit package appears in the installed package list.",
+  "manual_reason": null,
+  "generated_by": "hand-written",
+  "reviewed": true
+}
