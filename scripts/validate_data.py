@@ -21,6 +21,8 @@ from parsers import (  # noqa: E402
     extract_baseline_control_ids,
     extract_controls_from_json,
     load_cci_mapping,
+    load_cci_mapping_from_heimdall,
+    reconcile_cci_mapping,
     load_cci_records,
     load_stig_data,
 )
@@ -39,6 +41,9 @@ def main():
     ap.add_argument("--knowledge", default="knowledge")
     ap.add_argument("--catalog", default=None)
     ap.add_argument("--cci", default=None, help="path to U_CCI_List.xml (default: knowledge/ then ./)")
+    ap.add_argument("--cci-fallback", default=None,
+                    help="path to MITRE Heimdall CciNistMappingData.ts, used when no DISA list is found "
+                         "(default: knowledge/CciNistMappingData.ts)")
     ap.add_argument("--stigs", default="stigs")
     args = ap.parse_args()
 
@@ -80,29 +85,36 @@ def main():
     print(f"800-53A: objectives/methods for {len(assessment)} controls")
     check(not no_obj, "every active control has 800-53A objectives" + (f" (missing {no_obj[:5]})" if no_obj else ""))
 
-    # CCI
+    # CCI: the DISA list first, then the Heimdall fallback
     cci_path = args.cci or next((p for p in (os.path.join(k, "U_CCI_List.xml"), "U_CCI_List.xml") if os.path.exists(p)), None)
-    cci_to_nist = {}
-    if not cci_path:
-        print("CCI: no U_CCI_List.xml found; skipping CCI and STIG join checks (pass --cci PATH)")
-        failures.append("CCI list not found")
-    else:
+    fallback = args.cci_fallback or os.path.join(k, "CciNistMappingData.ts")
+    raw = {}
+    if cci_path:
         records = load_cci_records(cci_path)
-        cci_to_nist = load_cci_mapping(cci_path)
+        raw = load_cci_mapping(cci_path)
         rev5 = [r for r in records if any(x["version"] == "5" for x in r["references"])]
-        print(f"CCI: {cci_path}: {len(records)} CCIs, {len(rev5)} with a Rev 5 reference, {len(cci_to_nist)} mapped")
+        print(f"CCI: DISA list {cci_path}: {len(records)} CCIs, {len(rev5)} with a Rev 5 reference, {len(raw)} mapped")
         check(len(records) > 1000, "CCI list parses to more than 1,000 CCIs")
         if not rev5:
             newest = max((x["version"] for r in records for x in r["references"]), default="none")
             print(f"  NOTE  newest SP 800-53 revision referenced in this file: {newest}. "
                   "Use a CCI list published after DISA added Rev 5 mappings (2022 or later).")
-        check(len(cci_to_nist) > 1000, "more than 1,000 CCIs map to a Rev 5 control")
-        check(len(cci_to_nist) == len(rev5), "every CCI with a Rev 5 reference maps to a parseable control")
-        unknown = sorted({c for c in cci_to_nist.values() if c not in controls})
-        check(not unknown, "every CCI maps to a control in the catalog" + (f" (unknown {unknown[:10]})" if unknown else ""))
-        to_withdrawn = sorted({c for c in cci_to_nist.values() if c in controls and controls[c]["withdrawn"]})
-        if to_withdrawn:
-            print(f"  NOTE  {len(to_withdrawn)} controls with CCIs are withdrawn in Rev 5: {to_withdrawn[:10]}")
+        check(len(raw) == len(rev5), "every CCI with a Rev 5 reference maps to a parseable control")
+    if not raw and os.path.exists(fallback):
+        raw = load_cci_mapping_from_heimdall(fallback)
+        print(f"CCI: no usable DISA list; using MITRE Heimdall fallback {fallback}: {len(raw)} CCIs")
+    if not raw:
+        print("CCI: no usable Rev 5 CCI mapping (pass --cci or --cci-fallback)")
+        failures.append("no usable CCI mapping source")
+
+    cci_to_nist, report = reconcile_cci_mapping(raw, controls)
+    if raw:
+        print(f"  reconciled against Rev 5: {report['kept']} kept, {len(report['redirected'])} redirected "
+              f"from withdrawn controls, {len(report['dropped_not_in_rev5'])} dropped (not in Rev 5), "
+              f"{len(report['dropped_ambiguous'])} dropped (withdrawn, ambiguous replacement)")
+        check(len(cci_to_nist) > 1000, "more than 1,000 CCIs map to an active Rev 5 control")
+        check(all(c in controls and not controls[c]["withdrawn"] for c in cci_to_nist.values()),
+              "every mapped CCI points at an active Rev 5 control")
 
     # STIGs
     recs, stigs = load_stig_data(args.stigs, cci_to_nist)
@@ -111,7 +123,7 @@ def main():
         mapped = s["rule_count"] - s["unmapped_rules"]
         n_controls = len(recs.get(s["technology"], {}))
         print(f"  {s['technology']} ({s['release']}): {mapped}/{s['rule_count']} rules mapped to {n_controls} controls")
-        if cci_path:
+        if raw:
             check(mapped / max(s["rule_count"], 1) >= 0.95, f"{s['technology']}: at least 95% of rules map to a control")
 
     print()

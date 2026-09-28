@@ -23,7 +23,9 @@ from parsers import (  # noqa: E402
     extract_baseline_control_ids,
     extract_controls_from_json,
     load_cci_mapping,
+    load_cci_mapping_from_heimdall,
     load_cci_records,
+    reconcile_cci_mapping,
     load_stig_data,
     normalize_control_id,
     parse_control_ref,
@@ -91,6 +93,53 @@ def test_cci_mapping_uses_rev5_only():
 
 def test_cci_mapping_missing_file_is_empty():
     assert load_cci_mapping(os.path.join(FIXTURES, "does-not-exist.xml")) == {}
+
+
+# ----------------------------------------------------------------------
+#  Heimdall fallback and Rev 5 reconciliation
+# ----------------------------------------------------------------------
+HEIMDALL_SAMPLE = os.path.join(FIXTURES, "heimdall_cci_sample.ts")
+
+# Just enough catalog to reconcile against, mirroring real Rev 5 status.
+REV5 = {
+    "AU-3": {"withdrawn": False},
+    "CM-6": {"withdrawn": False},
+    "AC-17(2)": {"withdrawn": False},
+    "AC-2": {"withdrawn": False},
+    "AC-2(10)": {"withdrawn": True, "withdrawn_to": ["AC-2"]},
+    "AC-3(6)": {"withdrawn": True, "withdrawn_to": ["MP-4", "SC-28"]},
+    "MP-4": {"withdrawn": False},
+    "SC-28": {"withdrawn": False},
+    "IA-5(1)": {"withdrawn": False},
+    "AT-2": {"withdrawn": False},
+}
+
+
+def test_heimdall_mapping_parses_both_quote_styles():
+    m = load_cci_mapping_from_heimdall(HEIMDALL_SAMPLE)
+    assert len(m) == 8
+    assert m["CCI-000130"] == "AU-3"
+    assert m["CCI-003002"] == "IA-5(1)"
+    assert m["CCI-005147"] == "AT-2"
+    assert m["CCI-003001"] == "AR-1"  # Rev 4 privacy family; reconciliation drops it
+
+
+def test_reconcile_redirects_drops_and_keeps():
+    clean, report = reconcile_cci_mapping(load_cci_mapping_from_heimdall(HEIMDALL_SAMPLE), REV5)
+    assert clean["CCI-000130"] == "AU-3"
+    assert clean["CCI-002150"] == "AC-2"                       # withdrawn, one replacement
+    assert report["redirected"]["CCI-002150"] == ("AC-2(10)", "AC-2")
+    assert "CCI-003000" not in clean                           # withdrawn, two replacements
+    assert report["dropped_ambiguous"]["CCI-003000"][0] == "AC-3(6)"
+    assert report["dropped_not_in_rev5"] == {"CCI-003001": "AR-1"}
+    assert all(not REV5[c]["withdrawn"] for c in clean.values())
+    assert report["kept"] + len(report["redirected"]) == len(clean)
+
+
+def test_reconcile_leaves_clean_rev5_mapping_alone():
+    clean, report = reconcile_cci_mapping(load_cci_mapping(CCI_SAMPLE), {**REV5, "AC-8": {"withdrawn": False}})
+    assert clean == load_cci_mapping(CCI_SAMPLE)
+    assert not report["redirected"] and not report["dropped_ambiguous"] and not report["dropped_not_in_rev5"]
 
 
 # ----------------------------------------------------------------------
@@ -236,6 +285,20 @@ def test_real_assessment_procedures(catalog_json, controls):
     assert all(c["control_id"] in details for c in active)
     assert len(details["AU-3"]["objectives"]) == 6
     assert set(details["AU-3"]["methods"]) == {"EXAMINE", "INTERVIEW", "TEST"}
+
+
+HEIMDALL_REAL = os.path.join(DATA_DIR, "CciNistMappingData.ts")
+
+
+@real
+@pytest.mark.skipif(not os.path.exists(HEIMDALL_REAL), reason="Heimdall CCI mapping not downloaded")
+def test_real_heimdall_fallback_links_every_stig_rule(controls):
+    clean, report = reconcile_cci_mapping(load_cci_mapping_from_heimdall(HEIMDALL_REAL), controls)
+    assert len(clean) > 4000
+    assert all(c in controls and not controls[c]["withdrawn"] for c in clean.values())
+    _, stigs = load_stig_data(STIGS, clean)
+    for s in stigs:
+        assert s["unmapped_rules"] / s["rule_count"] <= 0.05, s
 
 
 @real

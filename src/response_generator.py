@@ -223,7 +223,7 @@ def _format_stig_table(recs: list, term_width: int, assessing: bool = False) -> 
 # ----------------------------------------------------------------------
 def generate_response(query, retrieved_docs, control_details, high_baseline_controls,
                       all_stig_recommendations, available_stigs, assessment_procedures,
-                      cci_to_nist, generate_checklist=False):
+                      cci_to_nist, generate_checklist=False, cci_redirects=None):
     query_lower = query.lower().strip()
     response = []
 
@@ -286,6 +286,10 @@ def generate_response(query, retrieved_docs, control_details, high_baseline_cont
                 response.append(f"- {cci_id} has no NIST SP 800-53 Rev 5 mapping in the loaded CCI list.")
                 return "\n".join(response)
             response.append(f"- {cci_id} maps to NIST {normalized_control}")
+            if cci_redirects and cci_id in cci_redirects:
+                original, _ = cci_redirects[cci_id]
+                response.append(f"- Note: the source maps this CCI to {original}, which Rev 5 withdrew; "
+                                f"shown here as its replacement, {normalized_control}.")
             if normalized_control in control_details:
                 ctrl = control_details[normalized_control]
                 response.append(f"- **Title:** {ctrl['title']}")

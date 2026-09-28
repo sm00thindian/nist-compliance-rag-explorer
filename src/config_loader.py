@@ -129,6 +129,7 @@ class Config:
             'moderate_baseline_url': self.get('moderate_baseline_url'),
             'high_baseline_url': self.get('high_baseline_url'),
             'cci_url': self.get('cci_url'),
+            'cci_fallback_url': self.get('cci_fallback_url'),
             'attack_mapping_url': self.get('nist_800_53_attack_mapping_url')
         }
 
