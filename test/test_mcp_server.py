@@ -84,12 +84,25 @@ def explorer():
     return Explorer.load(KNOWLEDGE, STIGS)
 
 
+# (covered, total, controls) per STIG, as printed by validate_data.py for each CCI source
+EXPECTED_COVERAGE = {
+    "U_CCI_List.xml": {"rhel": (137, 175, 81), "windows 10": (76, 113, 44)},        # DISA 2026-07-14
+    "CciNistMappingData.ts": {"rhel": (139, 179, 82), "windows 10": (77, 117, 45)},  # Heimdall fallback
+}
+
+
+def expected(explorer):
+    source = os.path.basename(explorer.ctx["cci_source"])
+    if source not in EXPECTED_COVERAGE:
+        pytest.skip(f"no expected numbers for CCI source {source}")
+    return EXPECTED_COVERAGE[source]
+
+
 @real
 def test_stig_coverage_matches_validate_data(explorer):
-    rhel = explorer.stig_coverage("rhel")
-    assert (rhel["statements_covered"], rhel["statements_total"], rhel["controls"]) == (139, 179, 82)
-    win = explorer.stig_coverage("windows 10")
-    assert (win["statements_covered"], win["statements_total"]) == (77, 117)
+    for stig, numbers in expected(explorer).items():
+        r = explorer.stig_coverage(stig)
+        assert (r["statements_covered"], r["statements_total"], r["controls"]) == numbers, stig
 
 
 @real
@@ -124,14 +137,19 @@ def test_cci_and_rule_lookups(explorer):
     rule = explorer.get_stig_rule("V-258054")
     assert {m["control"] for m in rule["cci_mappings"]} == {"AC-7"}
     assert explorer.lookup_cci("130")["cci"] == "CCI-000130"
-    dropped = next(iter(explorer.cci_report["dropped_ambiguous"]))
-    assert "not guessed" in explorer.lookup_cci(dropped)["dropped"]
+    # Unmapped CCIs are reported, not guessed: ambiguous Heimdall redirects, or DISA CCIs with no Rev 5 reference.
+    dropped = next(iter(explorer.cci_report["dropped_ambiguous"]), None)
+    if dropped:
+        assert "not guessed" in explorer.lookup_cci(dropped)["dropped"]
+    unmapped = next((c for c in explorer.cci_rules if c not in explorer.cci_to_nist), None)
+    if unmapped:
+        assert "control" not in explorer.lookup_cci(unmapped) and explorer.lookup_cci(unmapped)["dropped"]
 
 
 @real
 def test_gaps_are_the_uncovered_statements(explorer):
-    gaps = explorer.list_gaps("rhel", limit=500)
-    assert gaps["total"] == 179 - 139
+    covered, total, _ = expected(explorer)["rhel"]
+    assert explorer.list_gaps("rhel", limit=500)["total"] == total - covered
 
 
 @real

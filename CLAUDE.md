@@ -59,8 +59,10 @@ curl -o knowledge/nist_800_53-rev5_high-baseline_json.json  $B/NIST_SP-800-53_re
 curl -o knowledge/CciNistMappingData.ts https://raw.githubusercontent.com/mitre/heimdall2/master/libs/hdf-converters/src/mappings/CciNistMappingData.ts
 ```
 
-The authoritative CCI list is DISA's `U_CCI_List.xml` (public, no CAC:
-https://public.cyber.mil/stigs/cci/). Put it in `knowledge/`; it takes priority
+The authoritative CCI list is DISA's `U_CCI_List.xml`. Download it manually
+from https://www.cyber.mil/stigs/downloads (search for "CCI List"; it is a zip).
+Whether this download can be automated has not been checked, so there is no
+curl line for it. Put it in `knowledge/`; it takes priority
 over the Heimdall fallback. It must be 2022 or later: older copies (including
 the 2014 and 2016 ones on GitHub) reference only Rev 4 and map nothing.
 
@@ -68,6 +70,12 @@ Expected with catalog 5.2.0: 1,196 controls (182 withdrawn); baselines
 149 / 287 / 370; 800-53A for all 1,014 active controls. With the Heimdall
 fallback: 4,489 CCIs kept, 364 redirected, 245 dropped; every rule in both
 bundled STIGs maps; RHEL 9 covers 139/179 statements, Windows 10 77/117.
+With the DISA list (2026-07-14, 5,149 CCIs, 3,847 with a Rev 5 reference, all
+kept): every rule still maps; RHEL 9 137/175 (81 controls), Windows 10 76/113
+(44). The difference: 29 STIG CCIs have only Rev 3/4 references in DISA's list
+(Heimdall assigned them Rev 5 targets), so IA-4 drops out and some parts get
+narrower (AU-9 -> AU-9 a). DISA's zip names the file `CCI_List.xml`; save it
+as `knowledge/U_CCI_List.xml`.
 
 ## Commands
 
@@ -121,7 +129,7 @@ endpoints only; no live call has been made yet.
 4. Drop spaCy (`src/text_processing.py`); regex detection replaced it in
    responses. Keep sentence-transformer embeddings (local) for fuzzy queries,
    or make them optional.
-5. Get the current DISA CCI list and rerun `validate_data.py`.
+5. ~~Get the current DISA CCI list and rerun `validate_data.py`.~~ Done (2026-07-14 list).
 6. First live `generate` run on a handful of rules; measure check quality.
 
 ## Known issues
