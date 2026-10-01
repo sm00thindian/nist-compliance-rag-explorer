@@ -24,6 +24,9 @@ systems (configs, scan results, hostnames) as sensitive.
   reported, not inferred. Control-level CCIs are reported as control-level
   evidence unless the match is unambiguous.
 - The evidence API (`src/api`) must keep `ALLOW_EVIDENCE_TO_LLM` defaulting to off.
+- The MCP `results_rollup` tool exists only when the server is started with
+  `--results` and `ALLOW_ROLLUP_TO_LLM=1`; keep it off by default. It returns
+  IDs and statuses only, never code_desc, messages, platform or passthrough.
 
 ## Layout
 
@@ -34,8 +37,9 @@ systems (configs, scan results, hostnames) as sensitive.
 - `src/checks/`: local STIG checks. `spec` (format + validation), `engine`
   (evaluate against an evidence folder), `evidence` (folder layout + collection
   script), `generator` (LLM → checks, public text only), `llm` (provider
-  interface), `rollup` (results → 800-53A statements).
-- `scripts/checks.py`: `status | generate | review | plan | evaluate`.
+  interface), `rollup` (results → 800-53A statements), `hdf` (import CINC/InSpec
+  HDF results: Heimdall's status rules, match on `gid`, flag `rid` mismatches).
+- `scripts/checks.py`: `status | generate | review | plan | evaluate | import-results`.
 - `scripts/validate_data.py`: parses every source and checks counts and joins.
 - `checks/<technology>/<Vuln-ID>.json`: stored checks (4 hand-written RHEL 9
   examples, reviewed).
@@ -61,8 +65,10 @@ curl -o knowledge/CciNistMappingData.ts https://raw.githubusercontent.com/mitre/
 
 The authoritative CCI list is DISA's `U_CCI_List.xml`. Download it manually
 from https://www.cyber.mil/stigs/downloads (search for "CCI List"; it is a zip).
-Whether this download can be automated has not been checked, so there is no
-curl line for it. Put it in `knowledge/`; it takes priority
+The direct URL in `config/config.ini.template`
+(`dl.dod.cyber.mil/.../U_CCI_List.zip`) still downloads, but as of 2026-09 it
+serves the 2025-01-23 list, not the current one, so don't automate with it.
+Put it in `knowledge/`; it takes priority
 over the Heimdall fallback. It must be 2022 or later: older copies (including
 the 2014 and 2016 ones on GitHub) reference only Rev 4 and map nothing.
 
@@ -80,12 +86,14 @@ as `knowledge/U_CCI_List.xml`.
 ## Commands
 
 ```
-pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py   # 99 tests; real-data tests skip without knowledge/
+pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py   # 119 tests; real-data tests skip without knowledge/
 python scripts/validate_data.py [--cci path/to/U_CCI_List.xml]
 python scripts/checks.py status --stig rhel
 python scripts/checks.py generate --stig rhel --control AC-7 --dry-run   # shows the exact prompt
 python scripts/checks.py evaluate --stig rhel --evidence ./evidence --csv out.csv
+python scripts/checks.py import-results --stig rhel --hdf scan.json --csv out.csv
 python scripts/mcp_server.py            # stdio; claude mcp add nist-explorer -- <venv python> scripts/mcp_server.py
+ALLOW_ROLLUP_TO_LLM=1 python scripts/mcp_server.py --results scan.json --results-stig rhel   # adds results_rollup
 ```
 
 LLM provider: `LLM_PROVIDER=anthropic|bedrock|openai|xai` with
@@ -119,23 +127,20 @@ endpoints only; no live call has been made yet.
 1. **Read-only MCP server** over public data (first version done; 10 tools): control text/params/baselines,
    800-53A statements and methods, STIG rules, CCI mappings, profile-to-statement
    coverage, gap listing. No results, no credentials.
-2. **Results importer** for CINC/InSpec JSON (HDF). Map controls by `gid` tag,
-   flag `rid` revision mismatches with the loaded STIG, and feed
-   `checks.rollup`. Expose only rolled-up status through a gated MCP tool;
-   raw results stay out of model context by default.
+2. ~~**Results importer** for CINC/InSpec JSON (HDF).~~ Done: `checks.hdf`,
+   `checks.py import-results`, gated MCP `results_rollup`. Tested on a synthetic
+   fixture and MITRE's public RHEL 9 sample; not yet on a real CINC Auditor run.
+   Attestations are listed but not applied.
 3. **Redaction layer** for narrative evidence (policies, procedures) sent to an
    authorized endpoint: reversible placeholder tokenization (`10.2.3.4` →
    `IP_1`), restored locally, with a log of exactly what was sent.
-4. Drop spaCy (`src/text_processing.py`); regex detection replaced it in
-   responses. Keep sentence-transformer embeddings (local) for fuzzy queries,
-   or make them optional.
+4. ~~Drop spaCy.~~ Done. Sentence-transformer embeddings kept (local) for the
+   interactive CLI's fuzzy queries.
 5. ~~Get the current DISA CCI list and rerun `validate_data.py`.~~ Done (2026-07-14 list).
 6. First live `generate` run on a handful of rules; measure check quality.
 
 ## Known issues
 
-- `test/test_control_id.py`, `test_cci_id.py` and `test_stig_id.py` assert
-  buggy spaCy output (`AC-7(2`, `CM-6 ARE`). Delete them with the spaCy removal.
 - `test/test_rag_response.py` runs the full CLI with models; slow, not in the
   default test set.
 - `src/api` is an older proof of concept; its LLM path is gated and it predates

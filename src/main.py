@@ -5,7 +5,6 @@ import json
 import logging
 import requests
 from colorama import Fore, Style, init
-import spacy
 from tqdm import tqdm
 import zipfile
 import tempfile
@@ -26,7 +25,6 @@ from parsers import (
     load_stig_data
 )
 from response_generator import generate_response
-from text_processing import nlp  # spaCy model
 from config_loader import get_config
 from embedding_manager import EmbeddingManager
 
@@ -229,9 +227,6 @@ def main():
     embedding_manager = EmbeddingManager(embedding_config)
     model_info = embedding_manager.get_model_info()
     print(f"Model loaded: {model_info['model_name']} ({model_info['dimensions']}D, {model_info['device']})")
-
-    # Load spaCy (already done in text_processing.py)
-    print(f"Loaded spaCy model: {nlp.meta['name']}")
 
     stig_folder = app_config.get('stig_folder', STIG_FOLDER)
     verify_artifacts(data_urls, stig_folder)

@@ -40,7 +40,6 @@ class Config:
     def _set_defaults(self):
         """Set default configuration values."""
         defaults = {
-            'spacy_model': 'en_core_web_trf',
             'embedding_model': 'all-mpnet-base-v2',
             'embedding_dimensions': '768',
             'similarity_metric': 'cosine',
@@ -118,7 +117,6 @@ class Config:
             'max_retrieval_results': self.get('max_retrieval_results', 100),
             'enable_hybrid_search': self.get('enable_hybrid_search', False),
             'log_level': self.get('log_level', 'INFO'),
-            'spacy_model': self.get('spacy_model', 'en_core_web_trf')
         }
 
     def get_data_urls(self) -> Dict[str, str]:
