@@ -98,8 +98,12 @@ ALLOW_ROLLUP_TO_LLM=1 python scripts/mcp_server.py --results scan.json --results
 
 LLM provider: `LLM_PROVIDER=anthropic|bedrock|openai|xai` with
 `ANTHROPIC_MODEL` (default `claude-sonnet-5`), `BEDROCK_MODEL_ID` + `AWS_REGION`,
-`OPENAI_MODEL`, or `XAI_MODEL`. Request shapes were verified against mocked
-endpoints only; no live call has been made yet.
+`OPENAI_MODEL`, or `XAI_MODEL`. Anthropic has had one live run (2026-10-03,
+`claude-sonnet-5`); Bedrock, OpenAI and xAI are verified against mocked
+endpoints only. For local use, `ant auth login` (short-lived OAuth, bound to one
+workspace) works with `llm.py` unchanged when `ANTHROPIC_API_KEY` is unset; an
+`ANTHROPIC_API_KEY` in the environment overrides it. A personal key that isn't
+scoped to one workspace fails with a 400 (needs `anthropic-workspace-id`).
 
 ## Key design decisions
 
@@ -137,7 +141,20 @@ endpoints only; no live call has been made yet.
 4. ~~Drop spaCy.~~ Done. Sentence-transformer embeddings kept (local) for the
    interactive CLI's fuzzy queries.
 5. ~~Get the current DISA CCI list and rerun `validate_data.py`.~~ Done (2026-07-14 list).
-6. First live `generate` run on a handful of rules; measure check quality.
+6. ~~First live `generate` run~~ Done 2026-10-03, 8 RHEL 9 rules, `claude-sonnet-5`:
+   8/8 valid on the first try; 6 automatable, 2 manual (V-258106 NOPASSWD
+   exceptions, V-257777 vendor support lifecycle; both reasonable). On 15
+   evidence scenarios for the 4 rules with hand-written checks: 14/15 (the
+   references score 15/15). Two defects, both of which can pass a non-compliant
+   system:
+   - V-258151: pattern `^audit-\S+` also matches `audit-libs`, so a system
+     with only audit-libs passes.
+   - V-257985: reads only `/etc/ssh/sshd_config` with `occurrence: last`. sshd
+     uses the first value, and RHEL 9 includes `sshd_config.d/*.conf` first, so
+     a drop-in `PermitRootLogin yes` passes and a drop-in-only `no` fails.
+   Next: add sshd first-value/drop-in and package-name-anchoring guidance to
+   the generator prompt, add these as regression scenarios, and rerun. Keep
+   generated checks `reviewed: false` until a person approves them.
 
 ## Known issues
 
