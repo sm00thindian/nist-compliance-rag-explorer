@@ -162,3 +162,11 @@ def test_date_filters(tmp_path, capsys):
     r0.main(["--log", str(log), "list", "--since", "2026-10-10"])
     out = capsys.readouterr().out
     assert "2026-10-10" in out and "2026-10-14" in out and "2026-10-01" not in out
+
+
+def test_log_option_works_before_or_after_the_subcommand(tmp_path):
+    before, after = tmp_path / "before.csv", tmp_path / "after.csv"
+    args = ["--type", "control", "--tool", "get_control", "--answered", "yes", "--correct", "yes", "--faster", "same"]
+    assert r0.main(["--log", str(before), "add", *args]) == 0
+    assert r0.main(["add", "--log", str(after), *args]) == 0
+    assert before.exists() and after.exists()

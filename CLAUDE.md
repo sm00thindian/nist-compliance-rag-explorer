@@ -40,14 +40,23 @@ systems (configs, scan results, hostnames) as sensitive.
   interface), `rollup` (results → 800-53A statements), `hdf` (import CINC/InSpec
   HDF results: Heimdall's status rules, match on `gid`, flag `rid` mismatches).
 - `scripts/checks.py`: `status | generate | review | plan | evaluate | import-results`.
-- `scripts/validate_data.py`: parses every source and checks counts and joins.
+- `scripts/validate_data.py`: parses every source and checks counts and joins;
+  first prints each data file's source, version and SHA-256 (`src/provenance.py`),
+  warns on a stale CCI list or unexpected catalog version, `--json` to save them.
 - `checks/<technology>/<Vuln-ID>.json`: stored checks (4 hand-written RHEL 9
   examples, reviewed).
 - `src/main.py`, `src/response_generator.py`: interactive CLI.
 - `src/mcp_server/`: read-only MCP server (stdio). `data.Explorer` is the whole
   query surface (public data only, no paths, no results); `server.py` wraps it
   with the `mcp` 2.x SDK (`MCPServer`, not the 1.x `FastMCP`).
-- `scripts/mcp_server.py`: entry point.
+- `scripts/mcp_server.py`: entry point. `PUBLIC_TOOLS` in `server.py` is the
+  list of the 10 public tools.
+- Ring 0 dogfooding (feature #43): `scripts/ring0_check.py` (setup check),
+  `scripts/ring0_log.py` (local lookup log in `knowledge/ring0/log.csv` and a
+  Markdown summary against the Ring 0 targets), `scripts/prompt_guard.py`
+  (UserPromptSubmit hook, registered in `.claude/settings.json`, that blocks
+  prompts with IPs, MACs or non-public hostnames; `#public-ok` overrides),
+  `docs/ring0/prompt-hygiene.md`, and the `dogfood` issue template.
 - `src/api/`: FastAPI evidence-evaluation proof of concept (older, gated).
 - `stigs/`: bundled Windows 10 and RHEL 9 XCCDF files.
 
@@ -86,8 +95,13 @@ as `knowledge/U_CCI_List.xml`.
 ## Commands
 
 ```
-pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py   # 119 tests; real-data tests skip without knowledge/
-python scripts/validate_data.py [--cci path/to/U_CCI_List.xml]
+pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py \
+  test/test_ring0_check.py test/test_provenance.py test/test_ring0_log.py \
+  test/test_ring0_acceptance.py test/test_prompt_guard.py   # 284 tests; real-data tests skip without knowledge/
+python scripts/validate_data.py [--cci path/to/U_CCI_List.xml] [--json sources.json]
+python scripts/ring0_check.py                # Ring 0 setup check; exit 1 on any FAIL
+python scripts/ring0_log.py add --type gaps --tool list_gaps --answered yes --correct yes --faster yes
+python scripts/ring0_log.py summary          # Markdown for the Ring 0 review on #33
 python scripts/checks.py status --stig rhel
 python scripts/checks.py generate --stig rhel --control AC-7 --dry-run   # shows the exact prompt
 python scripts/checks.py evaluate --stig rhel --evidence ./evidence --csv out.csv
@@ -149,6 +163,11 @@ stays as an extra. Full plan, rationale and checklist: #33.
   shows a need); Docker, Kubernetes and performance work.
 
 ### Done
+
+- Ring 0 tooling (#35, #39, #40, #41, #42, part of #30): setup check, data
+  provenance, lookup log and review summary, prompt guard hook, dogfood issue
+  template, acceptance tests for R0-2 to R0-4. With the DISA list, RHEL 9 has
+  38 gap statements, 26 of them in MODERATE controls.
 
 - Read-only MCP server, 10 tools (#17).
 - HDF results importer: `checks.hdf`, `checks.py import-results`, gated MCP

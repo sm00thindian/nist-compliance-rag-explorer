@@ -29,15 +29,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
+from mcp_server.server import PUBLIC_TOOLS as EXPECTED_TOOLS  # noqa: E402
 from parsers import cci_list_metadata  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 ROLLUP_ENV = "ALLOW_ROLLUP_TO_LLM"
 SERVER_NAME = "nist-explorer"
-EXPECTED_TOOLS = frozenset({
-    "get_control", "search_controls", "get_assessment_procedure", "list_stigs", "get_stig_rule",
-    "search_stig_rules", "lookup_cci", "statement_coverage", "stig_coverage", "list_gaps",
-})
 BASELINE_LEVELS = ("LOW", "MODERATE", "HIGH")
 
 

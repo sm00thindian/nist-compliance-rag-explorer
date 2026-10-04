@@ -220,6 +220,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     a = sub.add_parser("add", help="append one lookup")
+    # --log also works after the subcommand; SUPPRESS keeps the top-level value when it's absent.
+    a.add_argument("--log", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     a.add_argument("--date", help="YYYY-MM-DD (default today)")
     a.add_argument("--type", dest="question_type", required=True, choices=QUESTION_TYPES)
     a.add_argument("--tool", required=True, help="MCP tool name, or 'cli'")
@@ -231,6 +233,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     for name, helptext in (("summary", "metrics vs Ring 0 targets, as Markdown"), ("list", "print the log")):
         s = sub.add_parser(name, help=helptext)
+        s.add_argument("--log", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
         s.add_argument("--since", help="YYYY-MM-DD, inclusive")
         s.add_argument("--until", help="YYYY-MM-DD, inclusive")
 

@@ -15,7 +15,8 @@ import os
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
 
-CCI_NS = "http://iase.disa.mil/cci"
+from parsers import cci_list_metadata
+
 DEFAULT_MAX_CCI_AGE_DAYS = 365
 DEFAULT_EXPECT_CATALOG_VERSION = "5.2.0"
 
@@ -27,7 +28,7 @@ CCI_FILE = "U_CCI_List.xml"
 HEIMDALL_FILE = "CciNistMappingData.ts"
 
 OSCAL_SOURCE = "NIST oscal-content (github.com/usnistgov/oscal-content)"
-CCI_SOURCE = 'DISA cyber.mil "CCI List" (public.cyber.mil/stigs/cci/)'
+CCI_SOURCE = 'DISA "CCI List" (www.cyber.mil/stigs/downloads)'
 HEIMDALL_SOURCE = "MITRE heimdall2 (libs/hdf-converters/src/mappings/CciNistMappingData.ts)"
 STIG_SOURCE = "bundled in stigs/ (DISA STIG XCCDF, public.cyber.mil)"
 
@@ -67,21 +68,9 @@ def describe_oscal(path: str, kind: str) -> dict:
 def describe_cci_list(path: str) -> dict:
     """DISA U_CCI_List.xml: <metadata><version> and <publishdate>."""
     rec = _base_record("cci_list", path, CCI_SOURCE)
-    version = publishdate = None
-    for event, elem in ET.iterparse(path, events=("end",)):
-        tag = elem.tag
-        if tag == f"{{{CCI_NS}}}metadata" or tag == "metadata":
-            for child in elem:
-                name = child.tag.split("}", 1)[-1]
-                if name == "version":
-                    version = (child.text or "").strip() or None
-                elif name == "publishdate":
-                    publishdate = (child.text or "").strip() or None
-            break
-        if tag.endswith("cci_item"):  # no metadata block before the items
-            break
-    rec["version"] = version
-    rec["publishdate"] = publishdate
+    meta = cci_list_metadata(path)
+    rec["version"] = meta["version"] or None
+    rec["publishdate"] = meta["publishdate"] or None
     return rec
 
 
@@ -194,7 +183,7 @@ def source_warnings(records: List[dict], today: Optional[_dt.date] = None,
                 if age > max_cci_age_days:
                     warnings.append(f"CCI list published {published.isoformat()} is {age} days old "
                                     f"(more than {max_cci_age_days}); get the current list from "
-                                    "public.cyber.mil/stigs/cci/")
+                                    "www.cyber.mil/stigs/downloads (\"CCI List\")")
     if "cci_list" not in kinds:
         if "cci_heimdall" in kinds:
             warnings.append("no DISA CCI list found; only the MITRE Heimdall fallback is available "

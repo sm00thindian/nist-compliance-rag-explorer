@@ -44,6 +44,11 @@ def empty_explorer():
 # ----------------------------------------------------------------------
 #  Read-only contract (offline)
 # ----------------------------------------------------------------------
+def test_public_tools_constant_matches_registered_tools():
+    from mcp_server.server import PUBLIC_TOOLS
+    assert PUBLIC_TOOLS == EXPECTED_TOOLS
+
+
 def test_tool_surface_is_read_only():
     tools = asyncio.run(build_server(empty_explorer()).list_tools())
     assert {t.name for t in tools} == EXPECTED_TOOLS
