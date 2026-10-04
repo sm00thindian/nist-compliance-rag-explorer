@@ -7,6 +7,10 @@ does, prints what was parsed, and exits non-zero if any check fails.
 
     python scripts/validate_data.py                     # uses knowledge/ and stigs/
     python scripts/validate_data.py --cci ~/Downloads/U_CCI_List.xml
+    python scripts/validate_data.py --json sources.json  # also write the data-source records
+
+It first prints a "Data sources" section (path, SHA-256, size, version and
+origin of every file used). WARN lines there never change the exit code.
 """
 import argparse
 import json
@@ -29,6 +33,14 @@ from parsers import (  # noqa: E402
     load_cci_records,
     load_stig_data,
 )
+from provenance import (  # noqa: E402
+    DEFAULT_EXPECT_CATALOG_VERSION,
+    DEFAULT_MAX_CCI_AGE_DAYS,
+    describe_sources,
+    format_record,
+    provenance_document,
+    source_warnings,
+)
 
 failures = []
 
@@ -48,10 +60,34 @@ def main():
                     help="path to MITRE Heimdall CciNistMappingData.ts, used when no DISA list is found "
                          "(default: knowledge/CciNistMappingData.ts)")
     ap.add_argument("--stigs", default="stigs")
+    ap.add_argument("--max-cci-age-days", type=int, default=DEFAULT_MAX_CCI_AGE_DAYS,
+                    help="WARN when the DISA CCI list's publishdate is older than this (default %(default)s)")
+    ap.add_argument("--expect-catalog-version", default=DEFAULT_EXPECT_CATALOG_VERSION,
+                    help="WARN when the catalog's metadata.version differs (default %(default)s)")
+    ap.add_argument("--json", default=None, metavar="PATH",
+                    help="also write the data-source records and warnings as JSON to PATH")
     args = ap.parse_args()
 
     k = args.knowledge
     catalog_path = args.catalog or os.path.join(k, "nist_800_53-rev5_catalog_json.json")
+
+    # Provenance of every input file (informational; warnings never fail the run)
+    records = describe_sources(k, args.stigs, cci_path=args.cci, catalog_path=catalog_path,
+                               cci_fallback=args.cci_fallback)
+    warnings = source_warnings(records, max_cci_age_days=args.max_cci_age_days,
+                               expect_catalog_version=args.expect_catalog_version)
+    print("Data sources:")
+    for r in records:
+        for line in format_record(r):
+            print(line)
+    for w in warnings:
+        print(f"  WARN  {w}")
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(provenance_document(records, warnings), f, indent=2)
+        print(f"  wrote data-source records to {args.json}")
+    print()
+
     print(f"Catalog: {catalog_path}")
     with open(catalog_path, encoding="utf-8") as f:
         catalog_json = json.load(f)

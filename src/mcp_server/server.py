@@ -34,6 +34,12 @@ statements with no STIG evidence (those need Examine/Interview). CCI mappings th
 ambiguous against Rev 5 are dropped and reported, never guessed. This server has no access
 to scan results or system evidence."""
 
+# The read-only tools over public data. results_rollup is separate and gated.
+PUBLIC_TOOLS = frozenset({
+    "get_control", "search_controls", "get_assessment_procedure", "list_stigs", "get_stig_rule",
+    "search_stig_rules", "lookup_cci", "statement_coverage", "stig_coverage", "list_gaps",
+})
+
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 

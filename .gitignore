@@ -14,3 +14,5 @@ __pycache__/
 *.pkl
 models/
 model_benchmark_results.json
+.claude/worktrees/
+.claude/settings.local.json

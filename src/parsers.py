@@ -406,6 +406,27 @@ def _local(tag: str) -> str:
     return tag.split("}", 1)[-1] if "}" in tag else tag
 
 
+def cci_list_metadata(cci_xml_path: str) -> Dict[str, str]:
+    """Read the list-level <metadata> of U_CCI_List.xml: {"version", "publishdate"}.
+
+    Only the top-level <metadata> block is read (each cci_item has its own
+    publishdate, which is ignored); parsing stops once that block ends.
+    Missing fields come back as "".
+    """
+    out = {"version": "", "publishdate": ""}
+    for _event, elem in ET.iterparse(cci_xml_path, events=("end",)):
+        name = _local(elem.tag)
+        if name == "metadata":
+            for child in elem:
+                key = _local(child.tag)
+                if key in out:
+                    out[key] = (child.text or "").strip()
+            break
+        if name == "cci_item":  # no metadata before the items
+            break
+    return out
+
+
 def load_cci_records(cci_xml_path: str) -> List[dict]:
     """Parse U_CCI_List.xml into records.
 
