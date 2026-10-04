@@ -192,8 +192,10 @@ stays as an extra. Full plan, rationale and checklist: #33.
   default test set. Its future is part of #32.
 - `src/api` is an older proof of concept; its LLM path is gated and it predates
   `src/checks`. Its future is #32.
-- There's no CI yet (#28); run the default test set and `validate_data.py`
-  before opening a PR.
+- CI (`.github/workflows/ci.yml`, #28) runs lint, the default test set,
+  `validate_data.py` and `ring0_check.py` on Python 3.12 and 3.14 for every PR.
+  It uses the Heimdall fallback, since the DISA CCI List can't be downloaded
+  automatically, so DISA-specific tests skip there; run them locally too.
 
 ## Git workflow
 
