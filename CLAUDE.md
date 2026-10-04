@@ -126,42 +126,55 @@ scoped to one workspace fails with a 400 (needs `anthropic-workspace-id`).
   organization-defined parameter values. The local JSON engine covers
   evidence-folder assessments and gaps.
 
-## Roadmap (agreed direction)
+## Plan (tracking issue #33)
 
-1. **Read-only MCP server** over public data (first version done; 10 tools): control text/params/baselines,
-   800-53A statements and methods, STIG rules, CCI mappings, profile-to-statement
-   coverage, gap listing. No results, no credentials.
-2. ~~**Results importer** for CINC/InSpec JSON (HDF).~~ Done: `checks.hdf`,
-   `checks.py import-results`, gated MCP `results_rollup`. Tested on a synthetic
-   fixture and MITRE's public RHEL 9 sample; not yet on a real CINC Auditor run.
-   Attestations are listed but not applied.
-3. **Redaction layer** for narrative evidence (policies, procedures) sent to an
-   authorized endpoint: reversible placeholder tokenization (`10.2.3.4` →
-   `IP_1`), restored locally, with a log of exactly what was sent.
-4. ~~Drop spaCy.~~ Done. Sentence-transformer embeddings kept (local) for the
-   interactive CLI's fuzzy queries.
-5. ~~Get the current DISA CCI list and rerun `validate_data.py`.~~ Done (2026-07-14 list).
-6. ~~First live `generate` run~~ Done 2026-10-03, 8 RHEL 9 rules, `claude-sonnet-5`:
-   8/8 valid on the first try; 6 automatable, 2 manual (V-258106 NOPASSWD
-   exceptions, V-257777 vendor support lifecycle; both reasonable). On 15
-   evidence scenarios for the 4 rules with hand-written checks: 14/15 (the
-   references score 15/15). Two defects, both of which can pass a non-compliant
-   system:
-   - V-258151: pattern `^audit-\S+` also matches `audit-libs`, so a system
-     with only audit-libs passes.
-   - V-257985: reads only `/etc/ssh/sshd_config` with `occurrence: last`. sshd
-     uses the first value, and RHEL 9 includes `sshd_config.d/*.conf` first, so
-     a drop-in `PermitRootLogin yes` passes and a drop-in-only `no` fails.
-   Next: add sshd first-value/drop-in and package-name-anchoring guidance to
-   the generator prompt, add these as regression scenarios, and rerun. Keep
-   generated checks `reviewed: false` until a person approves them.
+Narrowed direction: be the layer no open-source tool provides, mapping STIG
+results to SP 800-53A Rev 5 determination statements and listing the
+statements nothing automated covers. Leave review workflow, viewing and OSCAL
+authoring to STIG Manager, Heimdall and Compliance Trestle, and plug into them.
+DISA's CCI list only references 800-53A Revision 1, so the statement-level join
+through OSCAL `assessment-for` links is this project's core. The MCP server
+stays as an extra. Full plan, rationale and checklist: #33.
+
+- **Phase 0, validate the bet:** #21 compare with STIG Manager and Heimdall;
+  #22 pilot on one real system (results stay local). Go/no-go after #22.
+- **Phase 1, make it consumable:** #23 OSCAL Assessment Results export; #24
+  Examine/Interview worklist; #25 CKL/CKLB checklist input; #26 apply HDF
+  attestations.
+- **Phase 2, harden the core** (independent of the Phase 0 decision): #27
+  fix the two check-generation defects; #28 CI; #29 core packaging and Python
+  versions; #30 data source/version/checksum reporting; #31 README rewrite.
+- **Phase 3:** #32 decide the future of the interactive RAG CLI and `src/api`.
+- **Deferred:** redaction layer for narrative evidence (revisit if the pilot
+  shows a need); Docker, Kubernetes and performance work.
+
+### Done
+
+- Read-only MCP server, 10 tools (#17).
+- HDF results importer: `checks.hdf`, `checks.py import-results`, gated MCP
+  `results_rollup` (#19). Tested on a synthetic fixture and MITRE's public
+  RHEL 9 sample, not yet on a real CINC Auditor run. Attestations are listed
+  but not applied (#26).
+- spaCy removed (#19). Embeddings kept for the interactive CLI (#32).
+- DISA CCI list 2026-07-14 in use (#18).
+- First live `generate` run, 2026-10-03, 8 RHEL 9 rules, `claude-sonnet-5`
+  (#20): 8/8 valid on the first try; 6 automatable, 2 manual (V-258106 NOPASSWD
+  exceptions, V-257777 vendor support lifecycle). 14/15 scenario verdicts (the
+  hand-written references score 15/15). Two defects, both of which can pass a
+  non-compliant system, tracked in #27:
+  - V-258151: pattern `^audit-\S+` also matches `audit-libs`.
+  - V-257985: reads only `/etc/ssh/sshd_config` with `occurrence: last`. sshd
+    uses the first value, and RHEL 9 includes `sshd_config.d/*.conf` first.
+  Keep generated checks `reviewed: false` until a person approves them.
 
 ## Known issues
 
 - `test/test_rag_response.py` runs the full CLI with models; slow, not in the
-  default test set.
+  default test set. Its future is part of #32.
 - `src/api` is an older proof of concept; its LLM path is gated and it predates
-  `src/checks`.
+  `src/checks`. Its future is #32.
+- There's no CI yet (#28); run the default test set and `validate_data.py`
+  before opening a PR.
 
 ## Git workflow
 
