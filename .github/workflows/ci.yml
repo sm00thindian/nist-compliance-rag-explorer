@@ -1,0 +1,70 @@
+name: CI
+
+# Tests and data validation on every PR and on main.
+# CI uses only public data. DISA's CCI List can't be downloaded automatically
+# (manual download from cyber.mil), so CI validates with the MITRE Heimdall
+# fallback; tests that need the DISA list skip, and ring0_check warns on it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Week key for the data cache
+        id: week
+        run: echo "key=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache public NIST and Heimdall data
+        id: data
+        uses: actions/cache@v6
+        with:
+          path: knowledge
+          key: public-data-${{ steps.week.outputs.key }}
+
+      - name: Download public data
+        if: steps.data.outputs.cache-hit != 'true'
+        run: |
+          B=https://raw.githubusercontent.com/usnistgov/oscal-content/refs/heads/main/nist.gov/SP800-53/rev5/json
+          mkdir -p knowledge
+          get() { curl -fsS --retry 3 -o "knowledge/$1" "$2"; }
+          get nist_800_53-rev5_catalog_json.json          $B/NIST_SP-800-53_rev5_catalog.json
+          get nist_800_53-rev5_low-baseline_json.json     $B/NIST_SP-800-53_rev5_LOW-baseline_profile.json
+          get nist_800_53-rev5_moderate-baseline_json.json $B/NIST_SP-800-53_rev5_MODERATE-baseline_profile.json
+          get nist_800_53-rev5_high-baseline_json.json    $B/NIST_SP-800-53_rev5_HIGH-baseline_profile.json
+          get CciNistMappingData.ts https://raw.githubusercontent.com/mitre/heimdall2/master/libs/hdf-converters/src/mappings/CciNistMappingData.ts
+
+      - name: Install core dependencies
+        run: python -m pip install "mcp>=2.2,<3" pytest ruff
+
+      - name: Lint (syntax errors and undefined names)
+        run: ruff check --select E9,F63,F7,F82 src scripts test
+
+      - name: Tests
+        run: >
+          python -m pytest -q
+          test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py
+          test/test_ring0_check.py test/test_provenance.py test/test_ring0_log.py
+          test/test_ring0_acceptance.py test/test_prompt_guard.py
+
+      - name: Validate data
+        run: python scripts/validate_data.py
+
+      - name: Ring 0 setup check
+        run: python scripts/ring0_check.py --no-claude
