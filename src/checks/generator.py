@@ -59,6 +59,8 @@ Rules:
 - For a command, reuse the command shown in the check text, without "sudo" and without pipes if a single command's output suffices.
 - Numeric limits use lt/le/gt/ge with a numeric value. "Missing or commented out is a finding" means missing: "fail" (the default).
 - Paths may use * wildcards (e.g. /etc/ssh/sshd_config.d/*.conf); set "files" to say whether any or all matches must satisfy.
+- Package names in command output: anchor the pattern so a similarly named package cannot match. For the openssh package, "^openssh-\\d" or "^openssh\\.\\S+\\s" match "openssh-8.7p1-38.el9.x86_64" and the dnf table form "openssh.x86_64  8.7p1-38.el9", but "^openssh-\\S+" also matches "openssh-server-8.7p1-38.el9".
+- OpenSSH server (sshd) keyword values: sshd uses the FIRST value it reads for a keyword, and RHEL 9's sshd_config includes /etc/ssh/sshd_config.d/*.conf before its own settings, so reading files one at a time cannot tell which value is in effect. To check a keyword's value, use the command "sshd -T", which prints the effective configuration with lowercase keywords (e.g. "x11forwarding no"), and match that keyword's line. Keep file conditions for checks about the files themselves, such as an Include line or a file's presence.
 - Mark automatable false when the check needs human judgment: documentation, an ISSO/ISSM decision, site-specific values not given in the text, interviews, or reviewing a list for appropriateness.
 - Organization-defined values: if the check text gives a default (e.g. "3 or less"), use it; otherwise mark automatable false.
 

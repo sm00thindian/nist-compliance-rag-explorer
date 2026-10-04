@@ -61,7 +61,7 @@ jobs:
           python -m pytest -q
           test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py
           test/test_ring0_check.py test/test_provenance.py test/test_ring0_log.py
-          test/test_ring0_acceptance.py test/test_prompt_guard.py
+          test/test_ring0_acceptance.py test/test_prompt_guard.py test/test_eval_checks.py
 
       - name: Validate data
         run: python scripts/validate_data.py

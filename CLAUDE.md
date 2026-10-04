@@ -97,13 +97,14 @@ as `knowledge/U_CCI_List.xml`.
 ```
 pytest test/test_parsers.py test/test_checks.py test/test_mcp_server.py test/test_hdf.py \
   test/test_ring0_check.py test/test_provenance.py test/test_ring0_log.py \
-  test/test_ring0_acceptance.py test/test_prompt_guard.py   # 284 tests; real-data tests skip without knowledge/
+  test/test_ring0_acceptance.py test/test_prompt_guard.py test/test_eval_checks.py   # 290 tests; real-data tests skip without knowledge/
 python scripts/validate_data.py [--cci path/to/U_CCI_List.xml] [--json sources.json]
 python scripts/ring0_check.py                # Ring 0 setup check; exit 1 on any FAIL
 python scripts/ring0_log.py add --type gaps --tool list_gaps --answered yes --correct yes --faster yes
 python scripts/ring0_log.py summary          # Markdown for the Ring 0 review on #33
 python scripts/checks.py status --stig rhel
 python scripts/checks.py generate --stig rhel --control AC-7 --dry-run   # shows the exact prompt
+python scripts/eval_checks.py [--fake] [--rules V-257985]   # generated-check quality vs synthetic scenarios
 python scripts/checks.py evaluate --stig rhel --evidence ./evidence --csv out.csv
 python scripts/checks.py import-results --stig rhel --hdf scan.json --csv out.csv
 python scripts/mcp_server.py            # stdio; claude mcp add nist-explorer -- <venv python> scripts/mcp_server.py
@@ -180,11 +181,18 @@ stays as an extra. Full plan, rationale and checklist: #33.
   (#20): 8/8 valid on the first try; 6 automatable, 2 manual (V-258106 NOPASSWD
   exceptions, V-257777 vendor support lifecycle). 14/15 scenario verdicts (the
   hand-written references score 15/15). Two defects, both of which can pass a
-  non-compliant system, tracked in #27:
+  non-compliant system, fixed in #27:
   - V-258151: pattern `^audit-\S+` also matches `audit-libs`.
   - V-257985: reads only `/etc/ssh/sshd_config` with `occurrence: last`. sshd
     uses the first value, and RHEL 9 includes `sshd_config.d/*.conf` first.
-  Keep generated checks `reviewed: false` until a person approves them.
+- #27 (2026-10-04): the generator prompt now says to anchor package names
+  (illustrated with openssh, not audit, so the eval measures generalization)
+  and to read sshd keyword values from `sshd -T` (effective configuration),
+  since the check format can't express first-value-across-files. Rerun with
+  `scripts/eval_checks.py`: 8/8 valid on the first try, 20/20 scenario verdicts,
+  including five new V-257985 regression scenarios. `test/test_eval_checks.py`
+  pins both regressions. Keep generated checks `reviewed: false` until a person
+  approves them.
 
 ## Known issues
 
